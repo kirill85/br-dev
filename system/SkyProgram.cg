@@ -1,0 +1,331 @@
+// (c) David Cunningham 2009, Licensed under the MIT license: http://www.opensource.org/licenses/mit-license.php
+
+float4 zero(float4 var) { return min(float4(0,0,0,0),max(float4(0,0,0,0),var)); }
+float3 zero(float3 var) { return min(float3(0,0,0),max(float3(0,0,0),var)); }
+float2 zero(float2 var) { return min(float2(0,0),max(float2(0,0),var)); }
+float  zero(float var)  { return min(0,max(0,var)); }
+float4 one(float4 var) { return min(float4(1,1,1,1),max(float4(1,1,1,1),var)); }
+float3 one(float3 var) { return min(float3(1,1,1),max(float3(1,1,1),var)); }
+float2 one(float2 var) { return min(float2(1,1),max(float2(1,1),var)); }
+float  one(float var)  { return min(1,max(1,var)); }
+
+#define PI 3.141592653589
+#define MAX_LIGHT_RANGE 1
+
+gp4vp gp4gp gp4fp glslg glslv glslf arbvp1 arbfp1 vp40 fp40 vp30 fp30 vp20 fp20 float d3d9 () { return -1; }
+
+hlslv hlslf gs_4_0 vs_4_0 ps_4_0 vs_3_0 ps_3_0 vs_2_x ps_2_x vs_2_0 ps_2_0 vs_1_1 ps_1_3 ps_1_2 ps_1_1 float d3d9 () { return 1; }
+
+void vp_main
+(
+    in float3 vertex: POSITION,
+    in float2 tex_coord: TEXCOORD0,
+
+    uniform float4x4 world,
+    uniform float4x4 view_proj,
+    uniform float3 sun_pos,
+    uniform float4 viewport_size,
+    uniform float fov_y,
+
+    out float4 tex_coord_: TEXCOORD0,
+    out float4 pos_: TEXCOORD1,
+    out float4 pos_ss_: TEXCOORD2,
+    out float4 sun_pos_ss_: TEXCOORD3,
+    out float2 fov_: TEXCOORD5,
+    out float sun_squash_: TEXCOORD6,
+    out float2 sun_polar_: TEXCOORD7,
+    out float4 for_rasteriser : POSITION
+)
+{
+    float aspect = viewport_size.x / viewport_size.y;
+    float fov_x = aspect * fov_y;
+
+    float4x4 world_view_proj = mul(view_proj, world);
+    float3 world_pos = mul(world, float4(0,0,0,1)).xyz; // skybox is attached to the camera
+
+    // We need a world transform because the sky is rotating as the earth
+    // rotates.  Because having a world transform implies having translation as
+    // well as rotation, we have to drag the skybox around with the camera.
+    // Because of this, we have to use world coordinates for everything,
+    // including the sun position.
+
+    for_rasteriser = mul(world_view_proj, float4(vertex,1));
+    // hack our way to maximum depth
+    // for d3d9 and gl, 1 is the backplane (only the near plane is different between the two, 0 and -1 respectively)
+    for_rasteriser.z = for_rasteriser.w;
+    // use slightly less than full distance, to avoid black lightning artifacts
+    for_rasteriser.z *= (1-1.0/65536);
+
+    tex_coord_.xy = tex_coord;
+    sun_pos_ss_ = mul(view_proj, float4(world_pos-sun_pos,1));
+
+    // azimuth and elevation
+    pos_.xyz = mul(world, float4(vertex,1)).xyz - world_pos;
+
+    { // sun squashedness
+        sun_squash_ = 1;
+    }
+
+
+    sun_polar_.x = mod(atan2(-sun_pos.x, -sun_pos.y)/PI/2 + 1, 1) * 360;
+    sun_polar_.y = atan(-sun_pos.z / sqrt(dot(sun_pos.xy, sun_pos.xy))) / PI * 180;
+    fov_ = float2(fov_x, fov_y) / PI * 180;
+
+    // HACK:
+    tex_coord_.zw = vertex.xy;
+    pos_.w = vertex.z;
+} 
+
+float sun_falloff (float r, float falloff_distance)
+{
+    if (r<1) return 1;
+    r /= falloff_distance;
+    r += 0.8; // magic number, allows big sun + small fade to look different to small sun + big fade
+    return clamp(1/r/r, 0, 1);
+}
+
+float falloff (float x) { return clamp(1-x*x, 0, 1); }
+
+void fp_main
+(
+    in float2 screen_pos_ : WPOS,
+    in float4 tex_coord_: TEXCOORD0,
+    in float4 pos_: TEXCOORD1,
+    in float4 sun_pos_ss_: TEXCOORD3,
+    in float2 fov_: TEXCOORD5,
+    in float sun_squash_: TEXCOORD6,
+    in float2 sun_polar_: TEXCOORD7,
+
+    uniform sampler2D starfield : register(s0),
+    uniform sampler2D perlin : register(s1),
+    uniform sampler2D perlinN : register(s2),
+
+    uniform float4 viewport_size,
+
+    uniform float4 col0,
+    uniform float4 col1,
+    uniform float4 col2,
+    uniform float4 col3,
+    uniform float4 col4,
+    uniform float4 col5,
+    uniform float4 scol0,
+    uniform float4 scol1,
+    uniform float4 scol2,
+    uniform float4 scol3,
+    uniform float4 scol4,
+    uniform float4 scol5,
+
+    uniform float4 dividers,
+
+    uniform float sun_size,
+    uniform float4 sun_colour,
+    uniform float sun_falloff_distance,
+
+    uniform float sun_glare_distance,
+    uniform float horizon_glare_elevation,
+
+    uniform float4 hell_colour,
+
+    uniform float4 time,
+    uniform float4 cloud_anim,
+
+    uniform float cloud_coverage,
+    uniform float3 cloud_colour,
+
+    out float4 pixel : COLOR
+)
+{
+    float3 vertex = float3(tex_coord_.zw, pos_.w);
+
+    float2 polar_rad;
+    polar_rad.x = mod(atan2(pos_.x, pos_.y) + 2*PI, 2*PI);
+    polar_rad.y = atan(pos_.z / sqrt(dot(pos_.xy, pos_.xy)));
+    float az = polar_rad.x / PI * 180;
+    float el = polar_rad.y / PI * 180;
+    float2 polar_ = float2(az,el);
+
+    float2 tex_coord_ddx = ddx(tex_coord_.xy);
+    float2 tex_coord_ddy = ddy(tex_coord_.xy);
+
+    float2 perlin_uv = 0.3 * tan((PI/2-polar_rad.y))*float2(sin(polar_rad.x),cos(polar_rad.x));
+    float cloud_dist = sqrt(dot(perlin_uv,perlin_uv));
+    //cloud_anim = float4(0,0,0,0);
+    float2 clouduv1 = (time.x * cloud_anim.xy + perlin_uv.xy)/5;
+    float2 clouduv2 = (time.x * cloud_anim.zw + perlin_uv.yx)/5;
+    float2 clouduv3 = (time.x * cloud_anim.xy + perlin_uv.xy)*5;
+
+    float2 clouduv1ddx = ddx(clouduv1);
+    float2 clouduv1ddy = ddy(clouduv1);
+    float2 clouduv2ddx = ddx(clouduv2);
+    float2 clouduv2ddy = ddy(clouduv2);
+    float2 clouduv3ddx = ddx(clouduv3);
+    float2 clouduv3ddy = ddy(clouduv3);
+
+    if (el <= 0.0) {
+        pixel = hell_colour / MAX_LIGHT_RANGE;
+        return;
+    }
+
+    
+
+
+    // need to do these in fragment shader, to stop the sun vanishing at the corners of the screen
+    float2 pos_ss_ = screen_pos_/viewport_size.xy*2-1;
+    pos_ss_.y *= -d3d9();
+    sun_pos_ss_.xyz /= sun_pos_ss_.w;
+
+    // SUN GLARE
+    float2 rel_polar = sun_polar_ - polar_.xy;
+
+    // ensure range is within -180 and 180
+    if (rel_polar.x > 180) rel_polar.x -= 360;
+    if (rel_polar.x < -180) rel_polar.x += 360;
+
+    // debug crosshairs for polar coords
+    //if (abs(rel_polar.x) < 3) pixel.rgb = float3(1,1,0);
+    //if (abs(rel_polar.y) < 3) pixel.rgb = float3(1,0,0);
+    
+    // debug for drawing sun location
+    //if (dot(rel_polar, rel_polar) < 10*10) pixel.rgb *= float3(1,1,0);
+
+    // sunnyness is the amount this sky pixel is affected by the sun
+    float sunnyness = 0.0;
+    {
+        // needs max to avoid a big reflection on far side of the skysphere
+        float qty = max(0, - (rel_polar.x-90)/90 * (rel_polar.x+90)/90 - el / horizon_glare_elevation);
+        sunnyness = min(qty*qty, 1);
+    }
+
+    {
+        float r = pow(dot(rel_polar/sun_glare_distance, rel_polar/sun_glare_distance),.1);
+        r = min(r,2);
+        sunnyness = clamp(sunnyness + (cos(r*PI/2)+1)/2, 0, 1);
+    }
+    //sunnyness = 1-1/sunnyness;
+
+    // SKY GRADIENT
+    float4 sky;
+    float4 ssky;
+    float deg1 = dividers.x;
+    float deg2 = dividers.y;
+    float deg3 = dividers.z;
+    float deg4 = dividers.w;
+    int2 screen_pos1 = int2(screen_pos_) % 2;
+    float3 offset = float3(0,0,0);
+    if (screen_pos1.x==0) {
+        if (screen_pos1.y==0) {
+            offset = float3(0,0,1);
+        } else {
+            offset = float3(0,0,-1);
+        }
+    } else {
+        if (screen_pos1.y==0) {
+            offset = float3(0,1,0);
+        } else {
+            offset = float3(0,-1,0);
+        }
+    }
+    if (el < deg1) {
+        sky  = lerp(col0,  col1,  (el- 0)/(deg1-0));
+        ssky = lerp(scol0, scol1, (el- 0)/(deg1-0));
+    } else if (el < deg2) {
+        sky  = lerp(col1,  col2,  (el-deg1)/(deg2-deg1));
+        ssky = lerp(scol1, scol2, (el-deg1)/(deg2-deg1));
+    } else if (el < deg3) {
+        sky  = lerp(col2,  col3,  (el-deg2)/(deg3-deg2));
+        ssky = lerp(scol2, scol3, (el-deg2)/(deg3-deg2));
+    } else if (el < deg4) {
+        sky  = lerp(col3,  col4,  (el-deg3)/(deg4-deg3));
+        ssky = lerp(scol3, scol4, (el-deg3)/(deg4-deg3));
+    } else if (el <= 90) {
+        sky  = lerp(col4,  col5,  (el-deg4)/(90-deg4));
+        ssky = lerp(scol4, scol5, (el-deg4)/(90-deg4));
+    } else {
+        sky = float4(1,1,1,1);
+        ssky = float4(1,1,1,1);
+    }
+    sky = lerp(sky, ssky, sunnyness);
+
+    // STARFIELD
+    float4 star_texel = float4(0,0,0,0);
+    if (sky.a < 1) {
+        star_texel = tex2D(starfield, tex_coord_.xy, tex_coord_ddx, tex_coord_ddy);
+        star_texel.rgb = pow(star_texel.rgb, 1.5);
+    }
+
+    pixel.rgb = lerp(star_texel.rgb, sky.rgb, sky.a);
+
+
+    // SUN
+    if (sun_pos_ss_.z < 1) {
+        float2 sun_uv = float2(pos_ss_ - sun_pos_ss_.xy)/sun_size*fov_ * sun_squash_;
+        if (el < 0.3 && sun_uv.y < 0 && sun_uv.y > -1) {
+            //sun_uv.x *= (el+100)/101;
+            sun_uv.y += (0.3-el)/5;
+        }
+        float sun_qty = sun_colour.a * sun_falloff(dot(sun_uv,sun_uv), sun_falloff_distance);
+        float4 sun_texel = float4(sun_colour.rgb, sun_qty);
+        pixel.rgb = lerp(pixel.rgb, sun_texel.rgb, sun_texel.a);
+    }
+
+    //pixel.rgb = sunnyness * float3(1,1,1);
+    //pixel.rgb = (offset + 0.5) * float3(1,1,1);
+
+    float cloud_atten = falloff(cloud_dist/4.5);
+    if (cloud_atten > 0) {
+
+        float cloud_tex1 = tex2D(perlin, clouduv1, clouduv1ddx, clouduv1ddy).r;
+        float cloud_tex2 = tex2D(perlin, clouduv2, clouduv2ddx, clouduv2ddy).r;
+        float cloud_tex3 = tex2D(perlin, clouduv3, clouduv3ddx, clouduv3ddy).r;
+
+        float cloud = clamp(((0.48*cloud_tex1 + 0.48*cloud_tex2 + 0.04*cloud_tex3) - (1-cloud_coverage)) / cloud_coverage, 0, 1);
+        float murkyness = clamp(cloud*2.0 - 0.2, 0, 1) * 0.6;
+
+        float3 cloud_ntex1 = tex2D(perlinN, clouduv1, clouduv1ddx, clouduv1ddy).rgb*2 - 1;
+        float3 cloud_ntex2 = tex2D(perlinN, clouduv2, clouduv2ddx, clouduv2ddy).grb*2 - 1;
+        float3 cloud_ntex3 = tex2D(perlinN, clouduv3, clouduv3ddx, clouduv3ddy).rgb*2 - 1;
+        float3 cloud_n = float3(1,1,1) * (0.48*cloud_ntex1 + 0.48*cloud_ntex2 + 0.04*cloud_ntex3);
+        cloud_n = normalize(cloud_n);
+
+        float2 sun_uv = float2(pos_ss_ - sun_pos_ss_.xy);
+        float sun_distance = sqrt(dot(sun_uv,sun_uv)) * fov_*sun_squash_;
+        float3 sun_cloud_dome_pos;
+        sun_cloud_dome_pos.z = 4.51*sin(sun_polar_.y/180*PI);
+        sun_cloud_dome_pos.xy = 4.51*cos(sun_polar_.y/180*PI) * float2(sin(sun_polar_.x/180*PI), cos(sun_polar_.x/180*PI));
+        if (sun_cloud_dome_pos.z<0) sun_cloud_dome_pos.z *= -1;
+        float3 cloud_dome_pos = float3(perlin_uv, 0.3);
+        float3 cloud_sun_dir = normalize(sun_cloud_dome_pos - cloud_dome_pos);
+        float emboss = 0.5 + dot(cloud_n, cloud_sun_dir)/2;
+        //cloud *= 1 + (1-sky.a) * 2;
+        //emboss *= emboss;
+        emboss = 1  -  1 * (1-emboss);
+        //pixel.rgb += 2.0*cloud_colour.rgb*float3(-cloud_dx,cloud_dy,0) / sqrt(1+dot(perlin_uv,perlin_uv));
+        //pixel.rgb = pixel.rgb + cloud_colour * cloud * emboss;
+        //pixel.rgb = lerp(cloud*emboss * float3(.3,.3,.3), pixel.rgb, sky.a);
+        if (sun_pos_ss_.z < 1) {
+            murkyness *= 0*falloff(min(sun_distance/2,50)/50);
+        }
+        pixel.rgb = lerp(pixel.rgb, emboss*cloud_colour*(1-0*murkyness), cloud_atten * cloud);
+        //float emboss = (cloud_dx + cloud_dy) * cloud*5;
+        //pixel.rgb = cloud*emboss * float3(1,1,1) * cloud;
+        //pixel.rgb = emboss * float3(1,1,1);
+    }
+    float m = max(pixel.r, max(pixel.g, pixel.b));
+    if (m>1) {
+        //pixel.rgb *= 1/m;
+    }
+
+    pixel.rgb += pow(0.02/256 *offset, 1);
+
+    pixel /= MAX_LIGHT_RANGE;
+
+/*
+    if (abs(vertex.x) >= 0.999999) pixel.rgb = float3(1,0,0);
+    if (abs(vertex.y) >= 0.999999) pixel.rgb = float3(0,1,0);
+    if (abs(vertex.z) >= 0.999999) pixel.rgb = float3(0,0,1);
+*/
+
+    //pixel.a = sun_colour.r + sun_falloff_distance + sun_size + moon_colour.r + moon_size + dividers.x + col0.r + col1.r + col2.r + col3.r + col4.r + col5.r + scol0.r + scol1.r + scol2.r + scol3.r + scol4.r + scol5.r + horizon_glare_elevation + sun_glare_distance + hell_colour.r;
+
+} 
+

@@ -1,0 +1,11 @@
+include "BaseClass.lua"
+include "ColClass.lua"
+
+include "ActiveObjectShell.lua"
+include "CharClass.lua"
+include "Hover.lua"
+include "PileClass.lua"
+include "Plane.lua"
+include "ProcPileClass.lua"
+include "SoundEmitterClass.lua"
+include "Vehicle.lua"

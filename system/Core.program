@@ -1,0 +1,152 @@
+// (c) David Cunningham 2011, Licensed under the MIT license: http://www.opensource.org/licenses/mit-license.php
+
+// set up properly by materials.lua
+// the reason we need this here is that when the compositor is set up (via user_cfg.lua) before the materials are
+material /system/DeferredAmbientSun { technique { pass { } } }
+material /system/BloomHorz { technique { pass { } } }
+material /system/BloomVertRecombine { technique { pass { } } }
+
+vertex_program /system/ClearFatFB_v cg
+{
+    source "system/ClearFatFB.cg"
+    entry_point "vp_main"
+    profiles vs_3_0 gpu_vp
+    default_params {
+        param_named_auto "world_view_proj" worldviewproj_matrix
+    }
+}
+
+fragment_program /system/ClearFatFB_f cg
+{
+    source "system/ClearFatFB.cg"
+    entry_point "fp_main"
+    profiles ps_3_0 gp4fp
+    default_params {
+    }
+}
+
+material /system/ClearFatFB {
+    technique {
+        pass {
+            vertex_program_ref /system/ClearFatFB_v { }
+            fragment_program_ref /system/ClearFatFB_f { }
+            depth_func always_pass
+            fog_override true
+            lighting off
+            polygon_mode_overrideable false
+        }
+    }
+}
+
+
+vertex_program /system/DoNothingCompositorV cg
+{
+    source "system/do_nothing_compositor.cg"
+    entry_point "vp_main"
+    profiles vs_3_0 vp40
+}
+
+fragment_program /system/DoNothingCompositorF cg
+{
+    source "system/do_nothing_compositor.cg"
+    entry_point "fp_main"
+    profiles ps_3_0 fp40
+}
+
+material /system/DoNothingCompositor {
+    technique {
+        pass {
+            lighting off
+            depth_check false
+            vertex_program_ref /system/DoNothingCompositorV { }
+            fragment_program_ref /system/DoNothingCompositorF { }
+            texture_unit {
+            }
+        }
+    }
+}
+
+
+compositor /system/CoreCompositor {
+    technique {
+        //texture fat_fb target_width target_height PF_FLOAT32_RGBA PF_FLOAT32_RGBA PF_FLOAT32_RGBA PF_FLOAT32_RGBA
+        //texture fat_fb target_width target_height PF_R8G8B8A8 PF_R8G8B8A8 PF_R8G8B8A8 PF_R8G8B8A8 
+        // gamma didn't work
+        texture fat_fb target_width target_height PF_A8R8G8B8 PF_A8R8G8B8 PF_A8R8G8B8 PF_A8R8G8B8
+        //texture fat_fb target_width target_height PF_FLOAT32_R PF_A8R8G8B8 PF_A8R8G8B8 PF_A8R8G8B8
+
+        /*
+        first render HDR
+        then separate brighest areas for bloom and blur in X
+        then blur in Y and combine with original hdr for screen
+        */
+        texture hdr_fb target_width target_height PF_A2R10G10B10
+        texture hdr_bloom_horz_fb target_width target_height PF_A2R10G10B10
+
+        target fat_fb {
+
+            input none
+
+            pass render_quad {
+                material /system/ClearFatFB
+            }
+
+            pass render_scene
+            {
+                first_render_queue 0
+                last_render_queue  10
+            }
+
+        }
+        target_output {
+        //target hdr_fb {
+            input none
+            // the problem is it rendering into this one
+            pass clear
+            {
+                clear
+                {
+                    buffers depth colour
+                    colour_value 0.5 0 0 1
+                    depth_value 1.0
+                } 
+            }
+
+            pass render_quad {
+                material /system/DeferredAmbientSun
+                input 0 fat_fb 0
+                input 1 fat_fb 1
+                input 2 fat_fb 2
+                input 3 fat_fb 3
+            }
+            pass render_custom DeferredLights {
+                input 0 fat_fb 0
+                input 1 fat_fb 1
+                input 2 fat_fb 2
+                input 3 fat_fb 3
+            }
+            pass render_scene
+            {
+                first_render_queue 11
+                last_render_queue  105
+            }
+        }
+/*
+        target hdr_bloom_horz_fb {
+            input none
+            pass render_quad {
+                material /system/BloomHorz
+                input 0 hdr_fb
+            }
+        }
+        target_output {
+            input none
+            pass render_quad {
+                material /system/BloomVertRecombine
+                input 0 hdr_bloom_horz_fb
+                input 1 hdr_fb
+            }
+        }
+*/
+    }
+}

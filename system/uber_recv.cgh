@@ -1,0 +1,823 @@
+// (c) David Cunningham 2011, Licensed under the MIT license: http://www.opensource.org/licenses/mit-license.php
+
+#if BLEND <= 1
+#define BLENDSZ 1
+#else
+#define BLENDSZ 4
+#endif
+
+#if RENDER_OBJECT_NORMAL==1 || RENDER_NORMAL==1 || RENDER_TANGENT==1
+        #define ABUSING_AMBIENT 1
+#else
+        #define ABUSING_AMBIENT 0
+#endif
+
+
+#if FORWARD_PART==1
+
+// {{{ factored out forward rendering part
+void forward_pass (
+        float3 vertex_colour, float vertex_alpha,
+        float face,
+        float3 surf_diffuse, float surf_alpha, float3 surf_specular, float surf_gloss,
+        float alpha_rej,
+        float4 time,
+        float4 col1, float4 col2, float4 col3, float4 col4,
+        float3 col_spec1, float3 col_spec2, float3 col_spec3, float3 col_spec4,
+        float microflakes_mask,
+        #if USE_MICROFLAKES==1
+        float3 pos_os,
+        #endif
+        float render_target_flipping,
+        float contrast,
+        #if USE_NORMAL_MAP==1
+        float3 tangent_ws,
+        float tangent_parity,
+        #endif
+        float blend[BLENDSZ],
+        float visibility,
+        float2 screen_pos,
+        float3 texture_size,
+
+        EXTRA_MAPS_AGAIN
+
+        BLEND_UNIFORMS
+
+        inout float3 diff_colour,
+        inout float3 normal_ws,
+        inout float3 spec_colour,
+        inout float gloss,
+        inout float translucency,
+        inout float pixel_alpha
+) {
+        // {{{ texture coordinates
+        float2 uv[BLEND] = { UVS };
+        float2 uv_scale[BLEND] = { UV_SCALES };
+        float2 uv_animation[BLEND] = { UV_ANIMATIONS };
+        float2 uv_ddx[BLEND];
+        float2 uv_ddy[BLEND];
+
+        for (int i=0 ; i<BLEND ; ++i) {
+                uv[i] *= uv_scale[i];
+                uv[i] += time.x*uv_animation[i];
+                uv_ddx[i] = ddx(uv[i]);
+                uv_ddy[i] = ddy(uv[i]);
+        }
+        // }}}
+
+        // {{{ blend (heightmap) and diffuse
+
+        // Assuming a maximum height, we test what the contribution could be.
+        // If this is below zero then it is impossible to suppress the
+        // 'highest' texture, even if our height turns out to be maximum and
+        // the competition is minimum.  This means we can omit the texture fetch.
+        float max_contribution[BLEND];
+        {
+                // biggest blend factor (without including height)
+                float highest = 0;
+                for (int i=0 ; i<BLEND ; ++i) {
+                        highest = max(highest, blend[i]);
+                }
+
+                for (int i=0 ; i<BLEND ; ++i) {
+                        max_contribution[i] = max(0, highest + (blend[i] + 255.0/256/2 - highest)*contrast);
+                }
+                float total = max_contribution[0];
+                for (int i=1 ; i<BLEND ; ++i) {
+                        total += max_contribution[i];
+                }
+                total = 1/total;
+                for (int i=0 ; i<BLEND ; ++i) {
+                        max_contribution[i] *= total;
+                }
+        }
+
+
+        pixel_alpha = vertex_alpha * surf_alpha;
+        #if USE_DIFFUSE_MAP==1
+        float4 diff_txl[BLEND];
+                {
+                        sampler2D diffs[BLEND] = { DIFFUSE_MAPS };
+                        for (int i=0 ; i<BLEND ; ++i) {
+                                if (NO_OPTIMISE || d3d9()>0 || max_contribution[i] > 0) {
+                                        diff_txl[i] = FAKEtex2D(diffs[i], uv[i], uv_ddx[i], uv_ddy[i]);
+                                } else {
+                                        diff_txl[i] = float4(0,0,0,0);
+                                }
+                        }
+                }
+                #if BLEND==1
+                        pixel_alpha *= diff_txl[0].a;
+                        #if PREMULTIPLIED_ALPHA==1
+                        diff_txl[0].rgb = clamp(diff_txl[0].rgb/diff_txl[0].a, 0.0, 1.0);
+                        #endif
+                #endif
+        #endif
+        if (pixel_alpha <= alpha_rej) discard;
+
+        #if USE_HEIGHTMAP_BLENDING==1 && USE_DIFFUSE_MAP==1 && BLEND > 1
+                // include height
+                for (int i=0 ; i<BLEND ; ++i) {
+                        blend[i] += diff_txl[i].a * 255/256.0/2;
+                }
+        #endif
+
+
+        // contribution of each texture to the mix (including height)
+        float contribution[BLEND];
+        #if USE_HEIGHTMAP_BLENDING==1
+        {
+                float highest = blend[0];
+                // biggest blend factor (including height)
+                for (int i=1 ; i<BLEND ; ++i) {
+                        highest = max(highest, blend[i]);
+                }
+                float tmp = highest - highest * contrast;
+                for (int i=0 ; i<BLEND ; ++i) {
+                        contribution[i] = max(0.0, blend[i] * contrast + tmp);
+                }
+                float total = contribution[0];
+                for (int i=1 ; i<BLEND ; ++i) {
+                        total += contribution[i];
+                }
+                total = 1/total;
+                for (int i=0 ; i<BLEND ; ++i) {
+                        contribution[i] *= total;
+                }
+        }
+        #else
+        {
+                float rem = 1;
+                for (int i=1 ; i<BLEND ; ++i) {
+                        contribution[i] = blend[i];
+                        rem -= blend[i];
+                }
+                contribution[0] = rem;
+        }
+        #endif
+
+        #if USE_DIFFUSE_MAP==1
+        float4 diff_blend;
+                for (int i=0 ; i<BLEND ; ++i) {
+                        if (contribution[i] > 0) {
+                                diff_txl[i].rgb *= contribution[i];
+                        } else {
+                                diff_txl[i].rgb = float3(0,0,0);
+                        }
+                }
+                diff_blend = diff_txl[0];
+                for (int i=1 ; i<BLEND ; ++i) {
+                        diff_blend += diff_txl[i];
+                }
+        #endif
+
+        // }}}
+
+        #if USE_NORMAL_MAP==1
+        float3 norm_blend;
+        {
+                sampler2D norms[BLEND] = { NORMAL_MAPS };
+                float3 norm_txl[BLEND];
+                for (int i=0 ; i<BLEND ; ++i) {
+                        if (NO_OPTIMISE || d3d9()>0 || contribution[i]>0) {
+                                norm_txl[i] = FAKEtex2D(norms[i], uv[i], uv_ddx[i], uv_ddy[i]).rgb;
+                                norm_txl[i] *= contribution[i];
+                        }
+                }
+                norm_blend = norm_txl[0];
+                for (int i=1 ; i<BLEND ; ++i) {
+                        norm_blend += norm_txl[i];
+                }
+        }
+        #endif
+
+        #if USE_SPECULAR_MAP==1
+        float4 spec_blend;
+        {
+                sampler2D specs[BLEND] = { SPEC_MAPS };
+                float4 spec_txl[BLEND];
+                for (int i=0 ; i<BLEND ; ++i) {
+                        if (NO_OPTIMISE || d3d9()>0 || contribution[i]>0) {
+                                spec_txl[i] = FAKEtex2D(specs[i], uv[i], uv_ddx[i], uv_ddy[i]);
+                                spec_txl[i] *= contribution[i];
+                        }
+                }
+                spec_blend = spec_txl[0];
+                for (int i=1 ; i<BLEND ; ++i) {
+                        spec_blend += spec_txl[i];
+                }
+        }
+        #endif
+        #if USE_SPECULAR_FROM_DIFFUSE==1
+        float spec_intensity;
+        {
+                float spec_diff_contrast[BLEND] = { SPEC_DIFF_CONTRASTS };
+                float spec_diff_brightness[BLEND] = { SPEC_DIFF_BRIGHTNESSES };
+                for (int i=0 ; i<BLEND ; ++i) {
+                        float intensity = (greyscale(diff_txl[i].rgb)-0.5) * (1+spec_diff_contrast[i]) + 0.5 + spec_diff_brightness[i];
+                        spec_intensity += contribution[i] * intensity;
+                }
+                spec_intensity = max(0.0, spec_intensity);
+        }
+        #endif
+        #if USE_SPECULAR_FROM_DIFFUSE_ALPHA==1
+        float spec_intensity = diff_blend.a;
+        #endif
+
+        #if USE_TRANSLUCENCY_MAP==1
+        float4 tran_blend;
+        {
+                sampler2D trans[BLEND] = { TRAN_MAPS };
+                float4 tran_txl[BLEND];
+                for (int i=0 ; i<BLEND ; ++i) {
+                        if (NO_OPTIMISE || d3d9()>0 || contribution[i]>0) {
+                                tran_txl[i] = FAKEtex2D(trans[i], uv[i], uv_ddx[i], uv_ddy[i]);
+                                tran_txl[i] *= contribution[i];
+                        }
+                }
+                tran_blend = tran_txl[0];
+                for (int i=1 ; i<BLEND ; ++i) {
+                        tran_blend += tran_txl[i];
+                }
+        }
+        #endif
+
+        #if USE_PAINT_MAP==1
+        float4 paint_blend = FAKEtex2D(paint_map, uv[0], uv_ddx[0], uv_ddy[0]);
+        #endif
+
+
+        #if USE_NORMAL_MAP==1
+                float3 normal_ts = float3(-2,2,2)*(norm_blend.xyz - .5);
+        #endif
+        #if FLIP_BACKFACE_NORMALS==1
+        normal_ws *= process_face(render_target_flipping, face);
+        #endif
+        #if USE_NORMAL_MAP==1
+                float3 binormal_ws = tangent_parity * cross(normal_ws, tangent_ws);
+                normal_ws = normal_ts.x*tangent_ws + normal_ts.y*binormal_ws + normal_ts.z*normal_ws;
+        #endif
+
+
+
+        // compute diffuse surface colour
+        #if USE_DIFFUSE_MAP==1
+                float3 diff_texture_colour = gamma_correct(diff_blend.rgb);
+        #else
+                float3 diff_texture_colour = float3(1,1,1);
+        #endif
+        #if USE_SPECULAR_MAP==1
+                float3 spec_texture_colour = spec_blend.rgb;
+                #if USE_GLOSS_FROM_SPECULAR_ALPHA
+                        float gloss_texture = spec_blend.a;
+                #else
+                        float gloss_texture = 1;
+                #endif
+        #else
+                float3 spec_texture_colour = float3(1,1,1);
+                float gloss_texture = 1;
+        #endif
+
+        // blend in the colours
+        #if USE_PAINT_MAP==1
+                float3 colourised = paint_blend.r*col1 + paint_blend.g*col2 + paint_blend.b*col3 + (1-paint_blend.a)*col4;
+                float colourised_met = paint_blend.r*col1.a + paint_blend.g*col2.a + paint_blend.b*col3.a + (1-paint_blend.a)*col4.a;
+                float3 colourised_spec = paint_blend.r*col_spec1 + paint_blend.g*col_spec2 + paint_blend.b*col_spec3 + (1-paint_blend.a)*col_spec4;
+        #elif USE_PAINT_COLOUR==1
+                float3 colourised = col1;
+                float colourised_met = col1.a;
+                float3 colourised_spec = col_spec1;
+        #elif USE_PAINT_COLOUR==2
+                float3 colourised = col2;
+                float colourised_met = col2.a;
+                float3 colourised_spec = col_spec2;
+        #elif USE_PAINT_COLOUR==3
+                float3 colourised = col3;
+                float colourised_met = col3.a;
+                float3 colourised_spec = col_spec3;
+        #elif USE_PAINT_COLOUR==4
+                float3 colourised = col4;
+                float colourised_met = col4.a;
+                float3 colourised_spec = col_spec4;
+        #endif
+        #if USE_PAINT_ALPHA==1
+                diff_texture_colour = lerp(colourised, diff_texture_colour, diff_blend.a);
+                microflakes_mask *= lerp(colourised_met, 0, diff_blend.a);
+                spec_texture_colour = lerp(colourised_spec, spec_texture_colour, diff_blend.a);
+        #elif USE_PAINT_MASK==1
+                diff_texture_colour *= colourised;
+                microflakes_mask *= colourised_met;
+                spec_texture_colour *= colourised_spec;
+        #endif
+
+        #if USE_TRANSLUCENCY_MAP==1
+                translucency = tran_blend.r;
+        #else
+                translucency = 0;
+        #endif
+
+        #if USE_SPECULAR_FROM_DIFFUSE==1 || USE_SPECULAR_FROM_DIFFUSE_ALPHA==1
+                spec_texture_colour *= spec_intensity;
+        #endif
+        #if USE_MICROFLAKES==1
+                float scale = 8;
+                float microflakes = tex2D(microflakes_map, float2(scale*pos_os.x, mod(scale*pos_os.y, 1)/32 + floor(scale*pos_os.z*32)/32 )).r;
+                gloss_texture += gloss_texture * microflakes_mask * microflakes;
+        #endif
+        diff_colour = surf_diffuse * diff_texture_colour * gamma_correct(vertex_colour);
+        spec_colour = surf_specular * spec_texture_colour;
+        gloss = surf_gloss * gloss_texture;
+
+        // fade out
+        float v = visibility;
+        #if WORLD_GEOMETRY==1
+        // it seems that the rasteriser is a bit lossy, what goes in as 1.0 comes out a bit smaller
+        v += 0.5/256;
+        #endif
+
+        #if USE_STIPPLE_TEXTURE==1
+        if (v<1) {
+
+                int x = (int(screen_pos.x) % 8);
+                int y = (int(screen_pos.y) % 8);
+                
+                if (stipple(x,y,v,stipple_map)) discard;
+        }
+        #else
+                pixel_alpha *= v;
+        #endif
+
+        //////////////////////////// DEBUG STUFF //////////////////////////////////////////////////////////
+
+
+        #if RENDER_UV==1
+                #if USE_DIFFUSE_MAP==1 || USE_NORMAL_MAP==1 || USE_SPECULAR_MAP==1 || USE_TRANSLUCENCY_MAP==1 || USE_PAINT_MAP==1
+                        spec_colour = zero(spec_colour) + float3(uv[0]-floor(uv[0]),0);
+                #else
+                        spec_colour = zero(spec_colour) + float3(0,0,1);
+                #endif
+        #endif
+
+        #if RENDER_UV_STRETCH_BANDS==1
+                #if USE_DIFFUSE_MAP==1 || USE_NORMAL_MAP==1 || USE_SPECULAR_MAP==1 || USE_TRANSLUCENCY_MAP==1 || USE_PAINT_MAP==1
+                        float stretchx = sqrt(dot(texture_size.xy*uv_ddx[0],texture_size.xy*uv_ddx[0]));
+                        float stretchy = sqrt(dot(texture_size.xy*uv_ddy[0],texture_size.xy*uv_ddy[0]));
+                        spec_colour = zero(spec_colour);
+                        if (stretchx < 1.05 && stretchx > 0.95 && stretchy < 1.05 && stretchy > 0.95) {
+                                spec_colour += float3(1,1,0);
+                        } else if (stretchx < 1.05 && stretchx > 0.95) {
+                                spec_colour += float3(1,0,0);
+                        } else if (stretchy < 1.05 && stretchy > 0.95) {
+                                spec_colour += float3(0,1,0);
+                        }
+                #else
+                        spec_colour = zero(spec_colour) + zero(texture_size);
+                #endif
+        #endif
+        #if RENDER_UV_STRETCH==1
+                #if USE_DIFFUSE_MAP==1 || USE_NORMAL_MAP==1 || USE_SPECULAR_MAP==1 || USE_TRANSLUCENCY_MAP==1 || USE_PAINT_MAP==1
+                        float stretchx = sqrt(dot(texture_size.xy*uv_ddx[0],texture_size.xy*uv_ddx[0]));
+                        float stretchy = sqrt(dot(texture_size.xy*uv_ddy[0],texture_size.xy*uv_ddy[0]));
+                        float stretch = max(stretchx,stretchy);
+                        spec_colour = zero(spec_colour) + float3(.01/stretch,1/stretch,0.1/stretch);
+
+                #else
+                        spec_colour = zero(spec_colour) + zero(texture_size);
+                #endif
+        #endif
+
+        #if ABUSING_AMBIENT==1
+                spec_colour = zero(spec_colour) + surf_specular;
+        #endif
+
+        #if RENDER_VERTEX_COLOUR==1
+                spec_colour = zero(spec_colour) + gamma_correct(vertex_colour) * float3(1,1,1);
+        #endif
+
+        #if RENDER_NORMAL_MAP==1 
+                #if USE_NORMAL_MAP==1
+                        spec_colour = zero(spec_colour) + norm_blend;
+                #else
+                        spec_colour = zero(spec_colour) + float3(0.5,0.5,1);
+                #endif
+        #endif
+
+        #if RENDER_BINORMAL==1
+                #if USE_NORMAL_MAP==1
+                        spec_colour = zero(spec_colour) + direction_to_colour(binormal_ws);
+                #else
+                        spec_colour = zero(spec_colour) + float3(0.5,0.5,1);
+                #endif
+        #endif
+}
+// }}}
+
+#endif
+
+
+#if DEFERRED_AMBIENT_SUN_PART==1
+
+// {{{ shadow test utilities
+#if RECEIVE_SHADOWS == 1 
+
+float tap_test (sampler2D tex, float2 uv, float our_dist)
+{
+        return our_dist > FAKEtex2D(tex, uv, 0.0, 0.0).r ? 1.0 : 0.0;
+}
+
+float pcf_tap_test (sampler2D tex, int sz, float2 uv, float d)
+{
+        #if EMULATE_PCF == 0
+        return tap_test(tex,uv,d);
+        #else
+        uv *= sz;
+        uv -= float2(0.5,0.5);
+        float2 wh = floor(uv); // whole component
+        float2 fr = uv - wh; // fractional component
+
+        float t00 = tap_test(tex,(wh+float2(0.0,0.0))/sz,d);
+        float t01 = tap_test(tex,(wh+float2(0.0,1.0))/sz,d);
+        float t10 = tap_test(tex,(wh+float2(1.0,0.0))/sz,d);
+        float t11 = tap_test(tex,(wh+float2(1.0,1.0))/sz,d);
+
+        return lerp(lerp(t00, t01, fr.y), lerp(t10, t11, fr.y), fr.x);
+        #endif
+}
+
+#if SHADOW_FILTER_NOISE == 1
+float test_shadow (float3 pos_ls, sampler2D tex, sampler2D shadow_filter_noise, float our_dist, float spread, float2 screen_pos)
+#else
+float test_shadow (float3 pos_ls, sampler2D tex, float our_dist, float spread, float2 screen_pos)
+#endif
+{
+        pos_ls.xy /= pos_ls.z;
+
+        our_dist /= SHADOW_FACTOR;
+
+        float total = 0;
+        int samples = 0;
+
+        int filter_taps_side = int(sqrt(float(SHADOW_FILTER_TAPS)));
+        float half_filter_taps_side = filter_taps_side / 2.0;
+
+        #if SHADOW_FILTER_NOISE == 1
+
+                float2 noise_uv = screen_pos.xy / 64;
+                float2 noise_texel = FAKEtex2D(shadow_filter_noise, noise_uv, 0.0, 0.0).rg;
+                float2 noise_offset = (2*noise_texel-1); // length(offset) <= 1
+                float2 fragment_uv_offset = 0.8 * noise_offset;
+
+        #elif SHADOW_FILTER_DITHER == 1
+
+                float2 dithered_offset;
+                if ((int(screen_pos.x)%2)==1) {
+                        if ((int(screen_pos.y)%2)==1) {
+                                dithered_offset = float2( 1,  0);
+                        } else {
+                                dithered_offset = float2(-1,  0);
+                        }
+                } else {
+                        if ((int(screen_pos.y)%2)==1) {
+                                dithered_offset = float2( 0,  1);
+                        } else {
+                                dithered_offset = float2( 0, -1);
+                        }
+                }
+                float2 fragment_uv_offset = 0.6 * dithered_offset;
+
+        #else
+
+                float2 fragment_uv_offset = float2(0,0);
+
+        #endif
+
+        fragment_uv_offset *= spread / filter_taps_side / SHADOW_RES;
+
+        for (int y=0 ; y<filter_taps_side ; y++) {
+                for (int x=0 ; x<filter_taps_side ; x++) {
+                        float2 tap_uv = float2(x-half_filter_taps_side+0.5, y-half_filter_taps_side+0.5) * spread / SHADOW_RES;
+                        tap_uv /= half_filter_taps_side;
+                        total += pcf_tap_test(tex, SHADOW_RES, pos_ls.xy+fragment_uv_offset+tap_uv, our_dist);
+                        samples++;
+                }
+        }
+
+        return total / samples;
+}
+
+#endif // RECEIVE_SHADOWS
+// }}}
+
+// {{{ factored out lighting equation
+
+// x: exposure to sky (-1 to 1)
+// returns: luminance (0 to 1)
+float sky_shading_model (float x)
+{
+        //return (0.5*x+0.5)*(0.5*x+0.5);
+        return max(0.0,x);
+}
+
+// u: unshadowyness (0 to 1) (how much are we unshadowed by something else)
+// x: exposure to light (-1 to 1)
+// returns: luminance (0 to 1)
+float diffuse_shading_model (float u, float x)
+{
+        
+        #if SHADING_MODEL==0 // regular diffuse shading from phong model
+        float additional_ambient = 0;
+        #elif SHADING_MODEL==1 // http://developer.valvesoftware.com/wiki/Half_Lambert extended with shadow support
+        float additional_ambient = 0.5*abs(x);
+        additional_ambient *= -additional_ambient;
+        additional_ambient += 0.25;
+        #elif SHADING_MODEL==2 // personal hack
+        float additional_ambient = -0.5*abs(x);
+        additional_ambient += 0.5;
+        #endif
+        return max(min(u,x), 0.0) + additional_ambient;
+}
+
+float3 deferred_shading (
+        float3 diff_colour,
+        float3 normal_ws,
+        float3 spec_colour,
+        float gloss,
+        float translucency,
+        float cam_dist,
+        float3 sky_ws,
+
+        float3 sun_dir_ws,
+        float3 camera_dir_ws,
+        float shadow_oblique_cutoff,
+        float sun_dist_,
+        float2 screen_pos,
+        float surf_shadow_strength,
+
+        SHADOW_MAPS
+
+        float3 pos_ls1_,
+        float3 pos_ls2_,
+        float3 pos_ls3_,
+
+        float3 scene_ambient_colour,
+        float3 sun_diffuse_colour,
+        float3 sun_specular_colour,
+        float sky_light_strength,
+        float fog_param,
+        float3 fog_colour
+) {
+
+        // compute shadow (unshadowyness ranges from 1 (unshadowed) to 0 (fully shadowed)
+        // artifacts in unshadowyness will occur if the poly is parallel to the sun
+        // unshadowyness also fades away from the camera
+        float unshadowyness = 1.0;
+        float3 shadow_uv;
+        #if RECEIVE_SHADOWS == 1
+                float shadowyness = 0.0;
+                if (cam_dist < SHADOW_DIST1) {
+                        shadow_uv = float3(mod(pos_ls1_.xy/pos_ls1_.z,1),0);
+                        #if SHADOW_FILTER_NOISE == 1
+                        shadowyness = test_shadow(pos_ls1_, shadow_map1, shadow_filter_noise, sun_dist_, SPREAD1, screen_pos);
+                        #else
+                        shadowyness = test_shadow(pos_ls1_, shadow_map1, sun_dist_, SPREAD1, screen_pos);
+                        #endif
+                }
+                else if (cam_dist < SHADOW_DIST2) {
+                        shadow_uv = float3(mod(pos_ls2_.xy/pos_ls2_.z,1),1);
+                        #if SHADOW_FILTER_NOISE == 1
+                        shadowyness = test_shadow(pos_ls2_, shadow_map2, shadow_filter_noise, sun_dist_, SPREAD2, screen_pos);
+                        #else
+                        shadowyness = test_shadow(pos_ls2_, shadow_map2, sun_dist_, SPREAD2, screen_pos);
+                        #endif
+                }
+                else if (cam_dist < SHADOW_DIST3) {
+                        shadow_uv = float3(mod(pos_ls3_.xy/pos_ls3_.z,1),0);
+                        #if SHADOW_FILTER_NOISE == 1
+                        shadowyness = test_shadow(pos_ls3_, shadow_map3, shadow_filter_noise, sun_dist_, SPREAD3, screen_pos);
+                        #else
+                        shadowyness = test_shadow(pos_ls3_, shadow_map3, sun_dist_, SPREAD3, screen_pos);
+                        #endif
+                }
+
+                float fade = SHADOW_FADE_END==SHADOW_FADE_START ? 1 : min(1.0, (SHADOW_FADE_END-cam_dist)/(SHADOW_FADE_END-SHADOW_FADE_START));
+                shadowyness *= fade;
+                shadowyness *= surf_shadow_strength;
+                unshadowyness = max(0.0, 1 - shadowyness);
+        #endif // RECEIVE_SHADOWS == 1
+
+        // illumination means 'lit as if with a pure white light and the surface colour is white'
+
+        float3 ambient_illumination = scene_ambient_colour;
+        float3 ambient_component = ambient_illumination * diff_colour;
+
+        float sky_exposure = dot(normal_ws, sky_ws);
+        float sky_illumination = sky_shading_model(sky_exposure);
+        float3 sky_component = diff_colour * sky_illumination * (sky_light_strength * scene_ambient_colour);
+
+        float diff_exposure = dot(sun_dir_ws, normal_ws);
+        float flat_sun_exposure = diff_exposure;
+        float flat_sun_offset = clamp(flat_sun_exposure,0,shadow_oblique_cutoff);
+        flat_sun_exposure -= flat_sun_offset;
+        diff_exposure -= flat_sun_offset;
+        float diff_illumination = diffuse_shading_model(unshadowyness,diff_exposure);
+        float trans_exposure = dot(sun_dir_ws, normal_ws) * dot(sun_dir_ws, camera_dir_ws);
+        float trans_illumination = translucency * max(0.0,trans_exposure);
+        float3 diff_component = diff_colour * (trans_illumination + diff_illumination) * sun_diffuse_colour;
+
+        float spec_exposure = -dot(reflect(sun_dir_ws, normal_ws), camera_dir_ws);
+        float spec_illumination = pow(max(0.0000001,spec_exposure),gloss);
+        spec_illumination *= clamp(1.5*flat_sun_exposure,0,1); // reduce spec when the shadowmap is sparse, avoid artifacts
+        spec_illumination *= unshadowyness;
+        float rspec_illumination = pow(max(0.0000001,-spec_exposure),gloss/3);
+
+        float3 spec_component = spec_colour * spec_illumination * sun_specular_colour;
+        float3 rspec_component = (.05*spec_colour) * rspec_illumination * sun_specular_colour;
+
+        float3 pixel_colour = ambient_component + diff_component + sky_component + spec_component;
+        #if USE_REVERSE_SPECULAR==1
+        pixel_colour += rspec_component;
+        #endif
+
+        // exp2 fog
+        #if USE_FOG==1
+                pixel_colour = lerp(fog_colour, pixel_colour, fog_weakness(fog_param, cam_dist));
+        #endif
+
+        #if RENDER_NORMAL==1
+                pixel_colour = zero(pixel_colour) + direction_to_colour(normal_ws);
+        #endif
+
+        #if RENDER_UNSHADOWYNESS==1
+                pixel_colour = zero(pixel_colour) + float3(unshadowyness, unshadowyness, unshadowyness);
+        #endif
+
+        #if RENDER_DIFFUSE_COLOUR==1
+                pixel_colour = zero(pixel_colour) + diff_colour;
+        #endif
+        #if RENDER_SPECULAR_COLOUR==1
+                pixel_colour = zero(pixel_colour) + spec_colour;
+        #endif
+
+        #if RENDER_GLOSS==1
+                pixel_colour = zero(pixel_colour) + float3(gloss/100, gloss/10, gloss);
+        #endif
+
+        #if RENDER_FLAT_DIFFUSE_EXPOSURE==1
+                pixel_colour = zero(pixel_colour) + float3(flat_sun_exposure,1-abs(flat_sun_exposure),-flat_sun_exposure);
+        #endif
+        #if RENDER_DIFFUSE_EXPOSURE==1
+                pixel_colour = zero(pixel_colour) + float3(diff_exposure,1-abs(diff_exposure),-diff_exposure);
+        #endif
+        #if RENDER_SKY_EXPOSURE==1
+                pixel_colour = zero(pixel_colour) + float3(sky_exposure,1-abs(sky_exposure),-sky_exposure);
+        #endif
+        #if RENDER_SPECULAR_EXPOSURE==1
+                pixel_colour = zero(pixel_colour) + float3(spec_exposure,1-abs(spec_exposure),-spec_exposure);
+        #endif
+
+        #if RENDER_AMBIENT_ILLUMINATION==1
+                pixel_colour = zero(pixel_colour) + ambient_illumination;
+        #endif
+        #if RENDER_DIFFUSE_ILLUMINATION==1
+                pixel_colour = zero(pixel_colour) + float3(diff_illumination,diff_illumination,diff_illumination);
+        #endif
+        #if RENDER_SKY_ILLUMINATION==1
+                pixel_colour = zero(pixel_colour) + float3(sky_illumination,sky_illumination,sky_illumination);
+        #endif
+        #if RENDER_SPECULAR_ILLUMINATION==1
+                pixel_colour = zero(pixel_colour) + float3(spec_illumination,spec_illumination,spec_illumination);
+        #endif
+        #if RENDER_RSPECULAR_ILLUMINATION==1
+                pixel_colour = zero(pixel_colour) + float3(rspec_illumination,rspec_illumination,rspec_illumination);
+        #endif
+
+        #if RENDER_AMBIENT_COMPONENT==1
+                pixel_colour = zero(pixel_colour) + ambient_component;
+        #endif
+        #if RENDER_DIFFUSE_COMPONENT==1
+                pixel_colour = zero(pixel_colour) + diff_component;
+        #endif
+        #if RENDER_SKY_COMPONENT==1
+                pixel_colour = zero(pixel_colour) + sky_component;
+        #endif
+        #if RENDER_SPECULAR_COMPONENT==1
+                pixel_colour = zero(pixel_colour) + spec_component;
+        #endif
+        #if RENDER_RSPECULAR_COMPONENT==1
+                pixel_colour = zero(pixel_colour) + rspec_component;
+        #endif
+
+
+        #if RENDER_OBJECT_NORMAL==1 || RENDER_NORMAL_MAP==1 || RENDER_TANGENT==1 || RENDER_BINORMAL==1 || RENDER_UV==1 || RENDER_UV_STRETCH==1 || RENDER_VERTEX_COLOUR==1
+                pixel_colour = zero(pixel_colour) + spec_colour;
+        #endif
+
+        #if RENDER_UV_STRETCH_BANDS==1
+                pixel_colour = lerp(pixel_colour, spec_colour, 0.5);
+        #endif
+
+        //return lerp(pixel_colour, shadow_uv, 1);
+        return pixel_colour;
+}
+// }}}
+
+#endif
+
+// dist assumed to be >= 0
+float light_attenuation (float R, float dist)
+{
+        dist /= R;
+        dist = min(1.0,dist);
+        return 2*dist*dist*dist - 3*dist*dist + 1;
+}
+
+
+
+// {{{ split (2 bytes)
+// assumes v is in the range 0 to 1 inclusive
+// r.y may not be an integer -- if this matters then the caller should floor() it
+float2 split_2bytes (float v)
+{
+        v *= 256*256 - 1;
+        float2 r;
+        r.x = floor(v / 256); // most significant
+        r.y = (v - r.x * 256);  // least significant
+        return r / 255;
+}
+
+float join_2bytes (float2 bytes)
+{
+        return 255.0 * (256.0*bytes.x + bytes.y) / (256*256 - 1);
+}
+// }}}
+
+
+// {{{ split (3 bytes)
+// assumes v is in the range 0 to 1 inclusive
+// r.z may not be an integer -- if this matters then the caller should floor() it
+float3 split_3bytes (float v)
+{
+        v *= (256.0*256.0*256.0 - 1);
+        float3 r;
+        r.x = floor(v / 256.0 / 256.0); // most significant
+        r.y = floor((v - r.x * 256.0 * 256.0) / 256.0);  // middle significant
+        r.z = (v - r.x * 256.0 * 256.0 - r.y * 256.0);  // least significant
+        return r / 255.0;
+}
+
+float join_3bytes (float3 bytes)
+{
+        // for some reason if i do the *255.0 before the / (big thing) all hell breaks loose (d3d9 only)
+        return 255.0 * (256.0*256.0*bytes.x + 256.0*bytes.y + bytes.z) / (256.0*256.0*256.0 - 1);
+}
+// }}}
+
+
+
+
+// {{{ pack/unpack for gbuffer
+void pack_deferred (
+        inout float4 texel0,
+        inout float4 texel1,
+        inout float4 texel2,
+        inout float4 texel3,
+
+        in float shadow_oblique_cutoff,
+        in float3 diff_colour,
+        in float3 normal_ws,
+        in float3 spec_colour,
+        in float cam_dist, // normalised
+        in float gloss
+) {
+        normal_ws = normal_ws*float3(0.5,0.5,0.5) + float3(0.5,0.5,0.5) + float3(0.5,0.5,0.5)/255;
+        gloss /= 50;
+
+        texel0 = float4(split_3bytes(cam_dist), shadow_oblique_cutoff);
+        texel1 = float4(normal_ws, 0);
+        texel2 = float4(pow(diff_colour, 1/2.2), 0);
+        texel3 = float4(spec_colour/2, gloss);
+}
+
+void unpack_deferred (
+        in float4 texel0,
+        in float4 texel1,
+        in float4 texel2,
+        in float4 texel3,
+
+        out float shadow_oblique_cutoff,
+        out float3 diff_colour,
+        out float3 normal_ws,
+        out float3 spec_colour,
+        out float cam_dist, // normalised
+        out float gloss
+) {
+        cam_dist = join_3bytes(texel0.xyz);
+        shadow_oblique_cutoff = texel0.a;
+        normal_ws = normalize(texel1.xyz * float3(2,2,2) - float3(1,1,1));
+        diff_colour = pow(texel2.rgb, 2.2);
+        //ambient_colour = texel2.a;
+        spec_colour = texel3.rgb * 2;
+        gloss = texel3.a * 50;
+}
+// }}}
+

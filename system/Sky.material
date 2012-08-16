@@ -1,0 +1,72 @@
+// (c) David Cunningham 2009, Licensed under the MIT license: http://www.opensource.org/licenses/mit-license.php
+
+vertex_program /system/SkyDefault_v cg
+{
+    source "system/SkyDefault.cg"
+    entry_point "vp_main"
+    compile_arguments "-O3"
+    profiles vs_3_0 vp40
+    default_params {
+        param_named_auto "world_view_proj" worldviewproj_matrix
+    }
+}
+
+fragment_program /system/SkyDefault_f cg
+{
+    source "system/SkyDefault.cg"
+    entry_point "fp_main"
+    profiles ps_3_0 fp40
+}
+
+vertex_program /system/SkyProgram_v cg
+{
+    source "system/SkyProgram.cg"
+    entry_point "vp_main"
+    compile_arguments "-O3"
+    profiles vs_3_0 vp40
+    default_params {
+        param_named_auto "world" world_matrix
+        param_named_auto "view_proj" viewproj_matrix
+        param_named "sun_pos"  float3 0.0 0.0 -1.0
+        param_named_auto "viewport_size" viewport_size
+        param_named_auto "fov_y" fov
+    }
+}
+
+fragment_program /system/SkyProgram_f cg
+{
+    source "system/SkyProgram.cg"
+    entry_point "fp_main"
+    profiles ps_3_0 fp40
+    default_params {
+        param_named "col5" float4 0.203 0.256 0.352 1
+        param_named "col4" float4 0.323 0.378 0.572 1
+        param_named "col3" float4 0.549 0.627 0.741 1
+        param_named "col2" float4 0.752 0.823 0.870 1
+        param_named "col1" float4 0.752 0.843 0.870 1
+        param_named "col0" float4 0.827 0.913 0.952 1
+        param_named "dividers" float4 10 20 30 50
+
+        param_named "scol5" float4 0.203 0.256 0.352 1
+        param_named "scol4" float4 0.323 0.378 0.572 1
+        param_named "scol3" float4 0.549 0.627 0.741 1
+        param_named "scol2" float4 0.752 0.823 0.870 1
+        param_named "scol1" float4 0.752 0.843 0.870 1
+        param_named "scol0" float4 0.827 0.913 0.952 1
+
+        param_named "sun_size" float 10
+        param_named "sun_colour" float4 1 1 1 1
+        param_named "sun_falloff_distance" float 2
+        param_named_auto "viewport_size" viewport_size
+
+        param_named "sun_glare_distance" float 1
+        param_named "horizon_glare_elevation" float 15
+
+        param_named "hell_colour" float4 0 0 0 0
+        param_named_auto "time" time_0_x 2310
+        param_named "cloud_anim" float4 0.01 0.01 0.02 0.02
+        param_named "cloud_coverage" float 0.6
+        param_named "cloud_colour" float 0.5 0.5 0.5
+    }
+}
+
