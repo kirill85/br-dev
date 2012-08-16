@@ -1,0 +1,176 @@
+// (c) David Cunningham 2011, Licensed under the MIT license: http://www.opensource.org/licenses/mit-license.php
+
+#include <system/uber.cgh>
+#include <system/uber_recv.cgh>
+
+void vp_main (
+        in float4 pos_ws : POSITION,
+        in float4 vcol : COLOR0,
+        in float2 uv : TEXCOORD0,
+
+        uniform float4x4 view,
+        uniform float4x4 proj,
+        uniform float3 scene_ambient_colour,
+        uniform float3 sun_diffuse_colour,
+        uniform float4 the_fog_params,
+        uniform float3 the_fog_colour,
+        uniform float3 misc,
+
+        out float2 uv_ : TEXCOORD0,
+        out float3 deferred_uv : TEXCOORD1,
+        out float particle_front_dist : TEXCOORD2,
+        out float particle_depth : TEXCOORD3,
+        out float4 colour_ : COLOR0,
+        out float4 for_rasteriser : POSITION
+) {
+        float3 pos_vs = mul(view, float4(pos_ws.xyz,1)).xyz;
+        float3 colour = vcol.rgb; // particle colour attribute
+        float alpha = vcol.a; // particle alpha attribute
+
+        #if EMISSIVE==0
+        // HACK: lighting for particles is complicated -- assume always fully lit for now
+        colour *= (misc.y * scene_ambient_colour + sun_diffuse_colour);
+        #else
+        // Allow emissive colours to be given up to 8x brighter than what would
+        // normally be 'fully bright' -- this can trigger saturation and bloom
+        // since the vertex colours are packed byte -- this means using only 5
+        // bits (32 values) for 0 -> 1
+        colour *= 8;
+        #endif
+        colour = pow(colour,2.2); // particle colour attribute
+
+        // 1 means no fog, 0 means maximum fog
+        float fog_weakness_ = fog_weakness(the_fog_params.x, -pos_vs.z);
+        #if OPACITY==0
+        // opaque texture, no blending
+        // in fog, particle becomes fog-coloured
+        colour = lerp(the_fog_colour, colour, fog_weakness_);
+        #elif OPACITY==1
+        // alpha blend
+        // in fog, particle becomes fog-coloured
+        // masking the alpha value by the fog_weakness may also work, i am not sure
+        colour = lerp(the_fog_colour, colour, fog_weakness_);
+        #elif OPACITY==2 
+        // additive blend
+        // if we were to change the colour of the particle to the colour of the fog, the fog would be counted 'twice'
+        // once for the background colour (which includes fog all the way to the camera)
+        // and once for the distance between the particle and camera
+        // so, in fog, make particle dark, so that it has no additonal colour to add to the framebuffer
+        // (note: since we're not using alpha to mask the output, decreasing alpha doesn't do anything here)
+        colour *= fog_weakness_;
+        #elif OPACITY==3
+        // additive blend with alpha mask
+        // alpha does not attenuate the particle's own additive light so that must be dimmed just like above
+        // however also must prevent darkening due to the masking of the background, so decrease alpha too
+        alpha *= fog_weakness_;
+        colour *= fog_weakness_;
+        #endif
+
+        // equivalent of width and height in the 3rd dimension
+        particle_depth = -pos_ws.w*2;
+
+        // distance from camera (along z) to the closest part of the particle volume
+        // (or maybe the centre? need to check c++ code that sets pos_ws)
+        float cam_dist = -pos_vs.z;
+
+        colour_ = float4(colour, alpha);
+        uv_ = uv;
+        for_rasteriser = mul(proj, float4(pos_vs,1));
+        deferred_uv = for_rasteriser.xyw;
+
+        #if OPACITY==0
+        #else
+        // move right up to the camera -- avoid any depth culling
+        if (d3d9() > 0) {
+                // in d3d9, ensure z/w == 0
+                for_rasteriser.z = 0;
+        } else {
+                // in gl, ensure z/w is just above -1
+                for_rasteriser.z = -for_rasteriser.w + 1/30000.0;
+        }
+        #endif
+
+        // distance from camera (along z) to the closest part of the particle volume
+        particle_front_dist = cam_dist + pos_ws.w;
+}
+
+
+void fp_main (
+        in float4 colour : COLOR0,
+        in float2 uv_ : TEXCOORD0,
+        in float3 deferred_uv : TEXCOORD1,
+        in float particle_front_dist : TEXCOORD2,
+        in float particle_depth : TEXCOORD3,
+
+        #if PARTICLE_USE_DEFERRED == 1
+        sampler2D tex0 : register(s0),
+        sampler2D ptex : register(s1),
+        #else
+        sampler2D ptex : register(s0),
+        #endif
+
+        uniform float alpha_rej,
+        uniform float far_clip_distance,
+        uniform float4 viewport_size,
+        uniform float render_target_flipping,
+
+        out float4 pixel : COLOR0
+) {
+        float4 texel = tex2D(ptex, uv_);
+        if (texel.a <= alpha_rej) discard;
+
+        #if PREMULTIPLIED_ALPHA==1 && (OPACITY==1 || OPACITY==0)
+        texel.rgb /= texel.a;
+        #endif
+        texel.rgb = pow(texel.rgb, 2.2); // gamma correct texture
+
+        // colour.a is the particle's alpha attribute
+        pixel = float4(1,1,1,1);
+        pixel *= texel;
+        pixel *= colour;
+        pixel *= texel.a;
+        //pixel = colour*texel.a;
+
+
+        #if PARTICLE_USE_DEFERRED == 1
+        float2 uv = deferred_uv.xy/deferred_uv.z;
+        uv = uv * float2(0.5,render_target_flipping*-0.5) + float2(0.5,0.5);
+        if (d3d9() > 0) uv -= 0.5 * viewport_size.zw; // zw is 1/w 1/h
+
+
+        float shadow_oblique_cutoff;
+        float3 surf_diff_colour;
+        float3 normal_ws;
+        float3 surf_spec_colour;
+        float normalised_cam_dist;
+        float gloss;
+        unpack_deferred(tex2D(tex0, uv), float4(0,0,0,0), float4(0,0,0,0), float4(0,0,0,0),
+                        shadow_oblique_cutoff, surf_diff_colour, normal_ws, surf_spec_colour, normalised_cam_dist, gloss);
+
+        float3 fragment_cam_dist = normalised_cam_dist * far_clip_distance;
+
+
+        // amount by which some other fragment is poking into our sphere [0-1] (0 means fully, 1 means not at all)
+        float intrusion = clamp((fragment_cam_dist - particle_front_dist)/particle_depth, 0.0, 1.0);
+        //if (intrusion <= 0) discard;
+
+        //intrusion = zero(intrusion) + 0;
+        #if OPACITY==3 || OPACITY==2
+        pixel.rgb *= intrusion;
+        #endif
+        pixel.a *= intrusion;
+        //float2 r = 2*(uv_-float2(0.5,0.5));
+        //r.x = 1-min(1.0,sqrt(dot(r,r)));
+        //pixel.rgba = zero(pixel.rgba) + intrusion * r.x * float4(1,1,1,1);
+
+        //pixel.rgb = zero(pixel.rgb) + particle_depth*float3(1,1,1);
+
+        //if (pixel.a <= alpha_rej) discard;
+
+        #endif
+
+
+        pixel.rgb = pow(pixel.rgb,1/2.2);
+}
+
+// vim: ts=8:sw=8:et

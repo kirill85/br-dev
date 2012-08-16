@@ -1,0 +1,65 @@
+#include <system/uber.cgh>
+
+void vp_main (
+        in float2 pos_ss : POSITION,
+        in float2 uv0 : TEXCOORD0,
+        out float2 uv0_ : TEXCOORD0,
+        out float4 for_rasteriser : POSITION
+) {
+        for_rasteriser = float4(pos_ss, 0, 1);
+        uv0_ = uv0;
+}       
+
+// only consider brightest colours for blur
+float3 filter_for_blur(float3 colour)
+{
+        return max(float3(0,0,0), colour - float3(1,1,1));
+        //return colour;
+}
+
+#if HORZ==1
+// separate brighest areas for bloom and blur in X
+void fp_main (
+    in float2 uv : TEXCOORD0,
+    sampler2D tex : register(s0),
+    uniform float4 texture_size,
+    out float3 pixel : COLOR
+) {
+    float3 col = float3(0,0,0);
+
+    float off = texture_size.z;
+
+    col += 0.061 * filter_for_blur(gamma_correct(MAX_LIGHT_RANGE * tex2D(tex, uv + off*float2(-2, 0)).rgb));
+    col += 0.242 * filter_for_blur(gamma_correct(MAX_LIGHT_RANGE * tex2D(tex, uv + off*float2(-1, 0)).rgb));
+    col += 0.383 * filter_for_blur(gamma_correct(MAX_LIGHT_RANGE * tex2D(tex, uv + off*float2( 0, 0)).rgb));
+    col += 0.242 * filter_for_blur(gamma_correct(MAX_LIGHT_RANGE * tex2D(tex, uv + off*float2( 1, 0)).rgb));
+    col += 0.061 * filter_for_blur(gamma_correct(MAX_LIGHT_RANGE * tex2D(tex, uv + off*float2( 2, 0)).rgb));
+
+    pixel = tone_map(col);
+} 
+#else
+// then blur in Y and combine with original hdr for screen
+void fp_main (
+    in float2 uv : TEXCOORD0,
+    sampler2D tex : register(s0),
+    sampler2D original : register(s1),
+    uniform float4 texture_size,
+    out float3 pixel : COLOR
+) {
+    float3 col = float3(0,0,0);
+
+    float off = texture_size.w;
+
+    col += 0.061 * gamma_correct(MAX_LIGHT_RANGE * tex2D(tex, uv + off*float2(0, -2)).rgb);
+    col += 0.242 * gamma_correct(MAX_LIGHT_RANGE * tex2D(tex, uv + off*float2(0, -1)).rgb);
+    col += 0.383 * gamma_correct(MAX_LIGHT_RANGE * tex2D(tex, uv + off*float2(0,  0)).rgb);
+    col += 0.242 * gamma_correct(MAX_LIGHT_RANGE * tex2D(tex, uv + off*float2(0,  1)).rgb);
+    col += 0.061 * gamma_correct(MAX_LIGHT_RANGE * tex2D(tex, uv + off*float2(0,  2)).rgb);
+
+    //pixel = tone_map(col);
+    pixel = tone_map(col + gamma_correct(tex2D(original, uv).rgb * MAX_LIGHT_RANGE));
+    //pixel = tone_map(gamma_correct(tex2D(original, uv).rgb * MAX_LIGHT_RANGE));
+    //pixel = tone_map(gamma_correct(tex2D(tex, uv).rgb * MAX_LIGHT_RANGE));
+} 
+#endif
+

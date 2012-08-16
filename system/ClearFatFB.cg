@@ -1,0 +1,31 @@
+// (c) David Cunningham 2011, Licensed under the MIT license: http://www.opensource.org/licenses/mit-license.php
+
+void vp_main
+(
+    in float4 vertex: POSITION,
+    uniform float4x4 world_view_proj,
+    out float4 for_rasteriser : POSITION
+)
+{
+    for_rasteriser = mul(world_view_proj, vertex);
+    for_rasteriser.z = for_rasteriser.w;
+    // use slightly less than full distance, to avoid black lightning artifacts
+    // THIS HAS TO BE THE SAME AS THE CODE IN SkyProgram.cg
+    for_rasteriser.z *= (1-1.0/65536);
+
+} 
+
+void fp_main
+(
+    out float4 pixel0 : COLOR0,
+    out float4 pixel1 : COLOR1,
+    out float4 pixel2 : COLOR2,
+    out float4 pixel3 : COLOR3
+)
+{
+    pixel0 = float4(1,1,1,0);
+    pixel1 = float4(0,0,0,0);
+    pixel2 = float4(0,0,0,0);
+    pixel3 = float4(0,0,0,0);
+} 
+

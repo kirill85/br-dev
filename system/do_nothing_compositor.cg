@@ -1,0 +1,19 @@
+void vp_main (
+        in float2 pos_ss : POSITION,
+        in float2 uv0 : TEXCOORD0,
+        out float2 uv0_ : TEXCOORD0,
+        out float4 for_rasteriser : POSITION
+) {     
+        for_rasteriser = float4(pos_ss, 0, 1);
+        uv0_ = uv0;
+}       
+
+void fp_main (
+    in float2 uv : TEXCOORD0,
+    sampler2D tex0 : register(s0),
+    out float3 pixel : COLOR
+) {
+    float3 texel = tex2D(tex0, uv).rgb;
+    pixel = texel;
+} 
+

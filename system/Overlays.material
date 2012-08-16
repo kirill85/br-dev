@@ -1,0 +1,50 @@
+// (c) David Cunningham 2009, Licensed under the MIT license: http://www.opensource.org/licenses/mit-license.php
+
+// OVERLAYS
+
+abstract pass overlay_pass {
+    scene_blend alpha_blend
+    fog_override true
+    texture_unit {
+        colour_op_ex source1 src_manual src_current 1 1 1
+        alpha_op_ex source1 src_manual src_current 1
+    }
+}
+
+
+material system/ConsoleBorder {
+        technique {
+                pass : overlay_pass {
+            texture_unit {
+                    colour_op_ex source1 src_manual src_current 0 0 0
+                    alpha_op_ex source1 src_manual src_current .8
+            }
+                }
+        }
+}
+
+material system/Console {
+        technique {
+                pass : overlay_pass {
+            texture_unit {
+                    colour_op_ex source1 src_manual src_current 0 0 0.2
+                    alpha_op_ex source1 src_manual src_current 0.7
+            }
+                }
+        }
+}
+
+material system/CrossHair {
+        technique {
+                pass {
+            alpha_rejection greater 0
+            fog_override true
+            texture_unit {
+                    texture "system/Crosshair.bmp"
+                    tex_address_mode clamp 
+                    filtering point point none
+            }
+                }
+        }
+}
+

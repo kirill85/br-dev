@@ -1,0 +1,48 @@
+// (c) David Cunningham 2009, Licensed under the MIT license: http://www.opensource.org/licenses/mit-license.php
+
+fragment_program system/red_cyan_desaturated cg {
+    source "system/red_cyan_desaturated.cg"
+    entry_point "main"
+    profiles ps_2_0 arbfp1
+    default_params {
+        param_named "desaturation" float 0.5
+        param_named "left_mask" float3 1 1 0
+        param_named "right_mask" float3 0 0 1
+    }
+}
+
+material system/AnaglyphCompositorMaterialDesaturated {
+    technique {
+        pass {
+            fragment_program_ref system/red_cyan_desaturated {
+                // params filled in, in code
+            }
+            texture_unit {
+                // texture need not be specified here, as the compositor
+                // will give us the current framebuffer as a texture
+            }
+            texture_unit {
+                // texture need not be specified here, we will fill it in in code
+            }
+        }
+    }
+}
+
+compositor system/AnaglyphCompositor {
+    technique {
+        texture left_eye target_width target_height PF_A8R8G8B8
+
+        target left_eye {
+            input previous
+        }
+
+        target_output {
+            input none
+            pass render_quad {
+                material system/AnaglyphCompositorMaterialDesaturated
+                input 0 left_eye
+            }
+        }
+    }
+}
+

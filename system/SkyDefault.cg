@@ -1,0 +1,45 @@
+// (c) David Cunningham 2009, Licensed under the MIT license: http://www.opensource.org/licenses/mit-license.php
+
+void vp_main
+(
+    in float3 vertex: POSITION,
+    in float2 tex_coord: TEXCOORD0,
+
+    uniform float4x4 world_view_proj,
+
+    out float2 tex_coord_: TEXCOORD0,
+    out float4 for_rasteriser : POSITION
+)
+{
+
+    for_rasteriser = mul(world_view_proj, float4(vertex,1));
+
+    // hack our way to maximum depth
+    // for d3d9 and gl, 1 is the backplane (only the near plane is different between the two, 0 and -1 respectively)
+    for_rasteriser.z = for_rasteriser.w;
+    // use slightly less than full distance, to avoid black lightning artifacts
+    for_rasteriser.z *= 1 - 1.0f/256/256;
+
+    tex_coord_ = tex_coord;
+
+} 
+
+void fp_main
+(
+    in float2 tex_coord_: TEXCOORD0,
+
+    uniform sampler2D tex : register(s0),
+    uniform float alpha,
+    uniform float alpha_reject_threshold,
+    uniform float3 emissive_colour,
+
+    out float4 pixel : COLOR
+) {
+
+    pixel = tex2D(tex, tex_coord_);
+    pixel.rgb /= pixel.a;
+    pixel.rgb *= emissive_colour;
+    pixel.a *= alpha;
+    if (pixel.a <= alpha_reject_threshold) discard;
+}
+

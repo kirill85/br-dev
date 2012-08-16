@@ -1,0 +1,9 @@
+// (c) David Cunningham 2009, Licensed under the MIT license: http://www.opensource.org/licenses/mit-license.php
+
+material /system/DebugTexture {
+    technique {
+        pass {
+            texture_unit { }
+        }
+    }
+}
