@@ -1,4 +1,5 @@
 -- (c) David Cunningham 2011, Licensed under the MIT license: http://www.opensource.org/licenses/mit-license.php
+-- (c) Alexey "Razzeeyy" Shmakov 2012, Licensed under the GNU GPLv2 license: http://www.gnu.org/licenses/gpl-2.0.html
 
 -- TODO: refactor the whole game code to use this DEBUG thingy properly
 -- to avoid to include unneeded shit if DEBUG is not set

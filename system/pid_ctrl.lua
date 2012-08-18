@@ -1,3 +1,4 @@
+-- (c) Alexey "Razzeeyy" Shmakov 2012, Licensed under the GNU GPLv2 license: http://www.gnu.org/licenses/gpl-2.0.html
 
 pid_ctrl = {}
 
