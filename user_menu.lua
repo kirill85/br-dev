@@ -58,7 +58,8 @@ simple_menu.Misc_menu = {
 	{"UnitCube", function() place("/models/unitcube/UnitCube") end};
     {"SmallCharacter", function() place "/models/small_character/SmallCharacter" end };
 	{"MediumCharacter", function() place "/models/medium_character/MediumCharacter" end};
-    {"BigCharacter", function() place "/models/big_character/BigCharacter" end };
+    {"BigCharacter", function() place "/models/big_character/BigCharacter" end};
+    {"TestActor", function() place "/models/test/TestActor" end};
 	{"Bunker1", function() place("/models/bunker1/Bunker1") end};
 
 	MenuType = "child";
