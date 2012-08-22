@@ -51,6 +51,7 @@ local user_cfg_default = {
     lowPowerMode = false;
 	audioMasterVolume = 0.75;
     vehicleCameraTrack = true;
+    thirdPerson = false;
 }
 
 local user_cfg_doc = {
@@ -90,6 +91,7 @@ local user_cfg_doc = {
     lowPowerMode = "Reduce FPS and physics accuracy";
 	audioMasterVolume = "Master audio volume";
     vehicleCameraTrack = "Camera automatically follows vehicles";
+    thirdPerson = "Third person camera for self";
 }
 
 local user_cfg_spec = {
@@ -129,6 +131,7 @@ local user_cfg_spec = {
     lowPowerMode = { "one of", false, true };
 	audioMasterVolume =  { "range", 0, 1 }; 
 	vehicleCameraTrack = { "one of", false, true };
+    thirdPerson = { "one of", false, true};
 }           
             
 
@@ -652,6 +655,7 @@ local function commit(c, p, flush, partial)
             elseif k == "audioMasterVolume" then
                 audio_option("MASTER_VOLUME",v)
             elseif k == "vehicleCameraTrack" then
+            elseif k == "thirdPerson" then
             else
                 error("Unexpected: "..k)
             end

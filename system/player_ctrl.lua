@@ -196,8 +196,12 @@ function player_ctrl:update (elapsed)
                 end
 
                 local bearing, pitch = yaw_pitch(actor.instance.body.worldOrientation * V_FORWARDS)
-
-                self:handleChaseCam(pitch, actor.instance.camAttachPos, self.actor.instance.body)
+                
+                if user_cfg.thirdPerson then
+                    self:handleChaseCam(pitch, actor.instance.camAttachPos, self.actor.instance.body)
+                else
+                    self.camPos = actor.instance.camAttachPos
+                end
 
                 local x,y,z = unpack(self.camPos)
                 if self.speedo ~= nil then

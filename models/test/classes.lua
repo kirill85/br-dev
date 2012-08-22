@@ -10,10 +10,6 @@ class "TestActor" (CharClass) {
     height = 1.808;
     radius = 0.393;
 
-    footPos = vector3(0,0,0); -- maps to object defaul center of gravity (in this case middle of the cube), slowly falling down
-    --footPos = vector3(0,0,-0.9); -- maps to the object's bottom, the actual foot point, falling down fast
-    --footPos = vector3(0,0,0.9); -- maps to object's top, keeps flying up O_o
-
     camAttachPos = vector3(0,0,0.854);
 }
 
