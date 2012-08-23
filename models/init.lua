@@ -6,5 +6,6 @@ include "medium_character/init.lua"
 include "big_character/init.lua"
 include "bunker1/init.lua"
 
+include "steps/init.lua"
 include "test/init.lua"
 

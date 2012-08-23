@@ -26,7 +26,6 @@ end
 simple_menu.Maps_menu = {
 	Title = "Maps";
 	{"Urban", function() loadMap("/maps/urban/init.lua") end};
-    {"Ddesert", function() loadMap("/maps/ddesert/init.lua") end};
 	MenuType = "child";
 }
 
@@ -61,6 +60,17 @@ simple_menu.Misc_menu = {
     {"BigCharacter", function() place "/models/big_character/BigCharacter" end};
     {"TestActor", function() place "/models/test/TestActor" end};
 	{"Bunker1", function() place("/models/bunker1/Bunker1") end};
-
+    {"Steps", function() simple_menu:show(simple_menu.Steps) end};
 	MenuType = "child";
+}
+
+simple_menu.Steps = {
+    Title = "Spawn Steps";
+    {"15 Units", function() place("/models/steps/Steps15") end};
+    {"29 Units", function() place("/models/steps/Steps29") end};
+    {"31 Units", function() place("/models/steps/Steps31") end};
+    {"50 Units", function() place("/models/steps/Steps50") end};
+    {"100 Units", function() place("/models/steps/Steps100") end};
+    
+    MenuType = "child";
 }
