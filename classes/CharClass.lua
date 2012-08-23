@@ -13,6 +13,7 @@ CharClass = extends (ColClass) {
     runSpeed = 20;
     speedGainStep = 15;
     
+    jumpsAllowed = 2; -- how much air jumps allowed
     jumpVelocity = 5;
 
     stepHeight = 0.3;
@@ -32,6 +33,7 @@ local function initDefaultState(persistent, instance)
     instance.lastMoveDirection = V_ZERO
     instance.fallVelocity = 0
     instance.offGround = false
+    instance.jumpsDone = 0
     instance.jump = false
     instance.crouch = false
 
@@ -106,10 +108,20 @@ function CharClass.stepCallback(persistent, elapsed)
 
     local currCenter = body.worldPosition --currFoot + vector3(0,0,persistent.height/2)
 
-    if instance.jump and not instance.offGround then
-        instance.fallVelocity = persistent.jumpVelocity
+    if instance.jump then
+        if instance.offGround then
+            if instance.jumpsDone < persistent.jumpsAllowed then --check if we have ability to jump in air (aka double-jump)
+                instance.fallVelocity = persistent.jumpVelocity
+                instance.jumpsDone = instance.jumpsDone + 1
+
+            end
+        else
+            instance.fallVelocity = persistent.jumpVelocity
+            instance.jumpsDone = 1
+        end
+        instance.jump = false
     end
-    instance.jump = false
+    
 
     local gravity = physics_get_gravity().z
     local oldFallVelocity = instance.fallVelocity
@@ -166,7 +178,8 @@ function CharClass.stepCallback(persistent, elapsed)
             -- always adding on step_height to z is no good either -- actual step may be less than this (or zero)
             -- so we shoot a ray down to find the actual amount we have stepped up
             local stepCheckFraction = actor_cast(currCenter+vector3(0,0,persistent.stepHeight/2), vector3(0,0,-persistent.stepHeight), persistent.radius-0.01, persistent.height-persistent.stepHeight, body)
-            stepCheckFraction = stepCheckFraction or 1 -- might not hit the ground due to rounding errors etc
+            -- substraction of 0.01 from stepCheckFraction roughly fixes "trip on stairs" problem
+            stepCheckFraction = stepCheckFraction and stepCheckFraction-0.01 or 1 -- might not hit the ground due to rounding errors etc
             local actualStepHeight = persistent.stepHeight*(1-stepCheckFraction)
 
             -- if we have an upwards velocity, work out if we would have made the step or not
