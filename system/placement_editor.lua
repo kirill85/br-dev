@@ -103,9 +103,11 @@ end
 
 function placement_editor:manip (obj)
     if obj == nil or self.handledObj ~= nil then
-        print(dump(self.handledObj))
-        print(self.handledObj.instance.body.worldPosition)
-        print(self.handledObj.instance.body.worldOrientation)
+        local name = self.handledObj.name
+        local name = name:sub(name:find(":.*:")):gsub(":", "")
+        local pos = self.handledObj.instance.body.worldPosition
+        local rot = self.handledObj.instance.body.worldOrientation
+        print("object \""..name.."\" ("..pos.x..", "..pos.y..", "..pos.z..") {rot = quat("..rot.w..", "..rot.x..", "..rot.y..", "..rot.z..")}")
     
         self.handledObj = nil
         get_hud_root():removeChild(self.screenText)
