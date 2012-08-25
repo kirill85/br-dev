@@ -10,13 +10,15 @@ CharClass = extends (ColClass) {
     
     walkSpeed = 10;
     runSpeed = 20;
-    speedGainStep = 15; -- speed to gain per second
-    
+    speedGainStep = 15; -- speed to gain per second (simply acceleration)
+    strafeRun = false; --allow strafe running bug? http://en.wikipedia.org/wiki/Strafe_run#Straferunning
+
+
     jumpsAllowed = 2; -- how much jumps allowed in a row, before landing again (2 = aka double jump)
     jumpVelocity = 5;
 
     stepHeight = 0.3;
-    floorAngleThreshold = 48 --FIXME: take most common apropriate value, and remove this extra variable
+    floorAngleThreshold = 48; --FIXME: take most common apropriate value, and remove this extra variable
     slopeLimit = 50; -- maximum walkable slope angle
 
     pushForce = 1000;
@@ -161,7 +163,9 @@ function CharClass.stepCallback(persistent, elapsed)
     
     local moveState = vector3(instance.right - instance.left, instance.forwards - instance.backwards, 0)
     if moveState ~= V_ZERO then
-        moveState = norm(moveState)
+        if not persistent.strafeRun then
+            moveState = norm(moveState)
+        end
 
         local walkVect = (body.worldOrientation * moveState) * (instance.desiredSpeed * elapsed)
         local walkCylHeight = persistent.height - persistent.stepHeight
