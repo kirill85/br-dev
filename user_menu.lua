@@ -61,6 +61,8 @@ simple_menu.Misc_menu = {
     {"TestActor", function() place "/models/test/TestActor" end};
 	{"Bunker1", function() place("/models/bunker1/Bunker1") end};
     {"Steps", function() simple_menu:show(simple_menu.Steps) end};
+    {"Slopes", function() simple_menu:show(simple_menu.Slopes) end};
+
 	MenuType = "child";
 }
 
@@ -72,5 +74,16 @@ simple_menu.Steps = {
     {"50 Units", function() place("/models/steps/Steps50") end};
     {"100 Units", function() place("/models/steps/Steps100") end};
     
+    MenuType = "child";
+}
+
+simple_menu.Slopes = {
+    Title = "Spawn Slopes";
+    {"22 Degrees", function() place("/models/slopes/Slope22") end};
+    {"34 Degrees", function() place("/models/slopes/Slope34") end};
+    {"45 Degrees", function() place("/models/slopes/Slope45") end};
+    {"56 Degrees", function() place("/models/slopes/Slope56") end};
+    {"68 Degrees", function() place("/models/slopes/Slope68") end};
+
     MenuType = "child";
 }

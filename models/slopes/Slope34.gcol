@@ -1,0 +1,32 @@
+TCOL1.0
+
+attributes {
+    static;
+    linear_damping 0.5;
+    angular_damping 0.5;
+    linear_sleep_threshold 1.0;
+    angular_sleep_threshold 0.800000011920929;
+}
+
+compound {
+}
+trimesh {
+    vertexes {
+        0.9999996225039354 0.9999995231628418 -0.6666666865348816;
+        0.9999996225039354 -0.9999993443489927 -0.6666666865348816;
+        -1.9999996026356257 -0.99999922513976 -0.6666666865348816;
+        -1.9999988873801158 0.9999999999997726 -0.6666666865348816;
+        1.000000427166384 0.9999991059305273 1.3333333730697632;
+        0.9999986390276092 -0.9999999999997726 1.3333333730697632;
+    }
+    faces {
+        0 1 2 "/common/pmat/Stone";
+        0 2 3 "/common/pmat/Stone";
+        0 4 5 "/common/pmat/Stone";
+        0 5 1 "/common/pmat/Stone";
+        2 5 4 "/common/pmat/Stone";
+        2 4 3 "/common/pmat/Stone";
+        1 5 2 "/common/pmat/Stone";
+        0 3 4 "/common/pmat/Stone";
+    }
+}

@@ -132,7 +132,6 @@ include "audio.lua"
 include "/classes/init.lua"
 include "/common/init.lua"
 
-safe_include "/autoexec.lua"
 
 if DEBUG then
 	include "simplemenu.lua" --hacky menu :D
@@ -141,3 +140,4 @@ if DEBUG then
 	include "/vehicles/init.lua"
 end
 
+safe_include "/autoexec.lua" --this should be always last one to read
