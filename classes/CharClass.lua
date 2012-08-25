@@ -15,6 +15,7 @@ CharClass = extends (ColClass) {
 
 
     jumpsAllowed = 2; -- how much jumps allowed in a row, before landing again (2 = aka double jump)
+    jumpsIfFall = false; --allow air jumps if player just fall off the ground? (false = preventing player to save himself from fall damage by extra air jump before hit the ground)
     jumpVelocity = 5;
 
     stepHeight = 0.3;
@@ -89,7 +90,8 @@ local function cast_cylinder_with_deflection (body, radius, height, pos, movemen
                 ret_normal = wall_normal
                 ret_pos = pos + walk_fraction*movement
             end
-            wall_normal = norm(wall_normal * vector3(1,1,0))
+            wall_normal = wall_normal * vector3(1,1,0) 
+            if wall_normal ~= V_ZERO then wall_normal=norm(wall_normal) end
             movement = movement*walk_fraction + vector_without_component(movement*(1-walk_fraction), wall_normal)
         else
             return i, movement, ret_body, ret_normal, ret_pos
@@ -120,6 +122,7 @@ function CharClass.stepCallback(persistent, elapsed)
             instance.jumpsDone = 1
         end
         instance.jump = false
+        echo(instance.jumpsDone)
     end
     
 
@@ -132,33 +135,44 @@ function CharClass.stepCallback(persistent, elapsed)
     if fallFraction == nil then -- we are in mid air
         instance.offGround = true
         stepUp = false
-        fallFraction = 1
-        
-        currCenter = currCenter + fallFraction * fallVect
-    else -- we are on ground
-        instance.offGround = false
-        stepUp = true
-        instance.fallVelocity = 0
+        --fallFraction = 1
+        if instance.jumpsDone == 0 then -- we just fall off, no air jumps allowed
+            if not persistent.jumpsIfFall then
+                instance.jumpsDone = persistent.jumpsAllowed
+            end
+        end
 
+        currCenter = currCenter + --[[fallFraction *--]] fallVect
+    else -- we are on ground
+        --first, handle ground slopiness
+        local surfaceAngle = 90-math.deg(math.asin(floorNormal.z)) 
+
+        --FIXME: I guess this can be removed
+        --if surfaceAngle < 78 and surfaceAngle > persistent.floorAngleThreshold then
+            -- don't check for step if the surface is too smooth
+            --stepUp = false
+        --end
+
+        if surfaceAngle > persistent.slopeLimit then --slide down the slopes above the slope limit
+            --sliding at the speed of gravity
+            -- FIXME: there is a change to penetrate ground while sliding
+            currCenter = currCenter + quat(90, norm(cross(fallVect, floorNormal))) * floorNormal * gravity * elapsed
+            instance.offGround = true
+            stepUp = false
+        else --tell that we're purely on ground
+            instance.offGround = false
+            instance.fallVelocity = 0
+            instance.jumpsDone = 0
+            stepUp = true
+        end
+
+        --even if we're sliding on slope, we still apllying force down to the ground surface
         local groundForce = vector3(0,0,persistent.mass * gravity) -- pressure to ground
         local floorImpulse = persistent.mass * oldFallVelocity
         if floorImpulse ~= 0 then -- apply fall impulse to ground if any
             groundForce = groundForce + vector3(0,0,floorImpulse)
         end
         floorBody:force(groundForce, currCenter - vector3(0,0,persistent.height/2)) --force to ground at foot position
-
-        --handle ground slopiness
-        local surfaceAngle = 90-math.deg(math.asin(floorNormal.z)) 
-        if surfaceAngle < 78 and surfaceAngle > persistent.floorAngleThreshold then
-            -- don't check for step if the surface is too smooth
-            stepUp = false
-        end
-        if surfaceAngle > persistent.slopeLimit then 
-            --slide down the slopes above the slope limit
-            currCenter = currCenter + quat(90, norm(cross(fallVect, floorNormal))) * floorNormal * gravity * elapsed
-            --instance.offGround = true
-            instance.stepUp = false
-        end
     end
     
     local moveState = vector3(instance.right - instance.left, instance.forwards - instance.backwards, 0)
