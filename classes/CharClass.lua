@@ -13,7 +13,6 @@ CharClass = extends (ColClass) {
     speedGainStep = 15; -- speed to gain per second (simply acceleration)
     strafeRun = false; --allow strafe running bug? http://en.wikipedia.org/wiki/Strafe_run#Straferunning
 
-
     jumpsAllowed = 2; -- how much jumps allowed in a row, before landing again (2 = aka double jump)
     jumpsIfFall = false; --allow air jumps if player just fall off the ground? (false = preventing player to save himself from fall damage by extra air jump before hit the ground)
     jumpVelocity = 5;
@@ -22,8 +21,12 @@ CharClass = extends (ColClass) {
     floorAngleThreshold = 48; --FIXME: take most common apropriate value, and remove this extra variable
     slopeLimit = 50; -- maximum walkable slope angle
 
-    pushForce = 1000;
-    runPushForce = 1500;
+    --antiBump helps to cope "bumping" effect when walking down slopes
+    antiBumpAngleThreshold = 5; -- walking on slopes steeper than that will activate "bump effect" suppression
+    antiBumpFactor = 0.75; --between 0 and 1, the lower the value, the more bumps
+
+    pushForce = 1000; --TODO: should be mass dependent
+    runPushForce = 1500; --TODO: should be mass dependent
 }
 
 local function initDefaultState(persistent, instance)
@@ -39,6 +42,7 @@ local function initDefaultState(persistent, instance)
     instance.jumpsDone = 0
     instance.jump = false
     instance.crouch = false
+    instance.useAntiBump = false
 end
 
 function CharClass.activate(persistent, instance)
@@ -102,7 +106,7 @@ local function cast_cylinder_with_deflection (body, radius, height, pos, movemen
 end
 
 
-function CharClass.stepCallback(persistent, elapsed)
+function CharClass.stepCallback(persistent, elapsed) --FIXME: this is very rough code, must be refactored hard in the future
     local instance = persistent.instance
     local body = instance.body
 
@@ -115,14 +119,12 @@ function CharClass.stepCallback(persistent, elapsed)
             if instance.jumpsDone < persistent.jumpsAllowed then --check if we have ability to jump in air (aka double-jump)
                 instance.fallVelocity = persistent.jumpVelocity
                 instance.jumpsDone = instance.jumpsDone + 1
-
             end
         else
             instance.fallVelocity = persistent.jumpVelocity
             instance.jumpsDone = 1
         end
         instance.jump = false
-        echo(instance.jumpsDone)
     end
     
 
@@ -134,28 +136,27 @@ function CharClass.stepCallback(persistent, elapsed)
     local stepUp
     if fallFraction == nil then -- we are in mid air
         instance.offGround = true
+        instance.antiBump = false
         stepUp = false
-        --fallFraction = 1
         if instance.jumpsDone == 0 then -- we just fall off, no air jumps allowed
             if not persistent.jumpsIfFall then
                 instance.jumpsDone = persistent.jumpsAllowed
             end
         end
 
-        currCenter = currCenter + --[[fallFraction *--]] fallVect
+        currCenter = currCenter + fallVect
     else -- we are on ground
         --first, handle ground slopiness
         local surfaceAngle = 90-math.deg(math.asin(floorNormal.z)) 
 
         --FIXME: I guess this can be removed
         --if surfaceAngle < 78 and surfaceAngle > persistent.floorAngleThreshold then
-            -- don't check for step if the surface is too smooth
+            -- don't check for step if the surface is too smooth??
             --stepUp = false
         --end
-
         if surfaceAngle > persistent.slopeLimit then --slide down the slopes above the slope limit
             --sliding at the speed of gravity
-            -- FIXME: there is a change to penetrate ground while sliding
+            -- FIXME: there is a chance to penetrate ground while sliding
             currCenter = currCenter + quat(90, norm(cross(fallVect, floorNormal))) * floorNormal * gravity * elapsed
             instance.offGround = true
             stepUp = false
@@ -164,6 +165,11 @@ function CharClass.stepCallback(persistent, elapsed)
             instance.fallVelocity = 0
             instance.jumpsDone = 0
             stepUp = true
+            if surfaceAngle > persistent.antiBumpAngleThreshold then
+                instance.useAntiBump = true
+            else
+                instance.useAntiBump = false
+            end
         end
 
         --even if we're sliding on slope, we still apllying force down to the ground surface
@@ -175,7 +181,8 @@ function CharClass.stepCallback(persistent, elapsed)
         floorBody:force(groundForce, currCenter - vector3(0,0,persistent.height/2)) --force to ground at foot position
     end
     
-    local moveState = vector3(instance.right - instance.left, instance.forwards - instance.backwards, 0)
+    local antiBumpState = (instance.useAntiBump and instance.jumpsDone == 0) and -persistent.antiBumpFactor or 0 --applying antibump factor if needed, also trying to avoid jump suppression here
+    local moveState = vector3(instance.right - instance.left, instance.forwards - instance.backwards, antiBumpState)
     if moveState ~= V_ZERO then
         if not persistent.strafeRun then
             moveState = norm(moveState)
@@ -213,7 +220,6 @@ function CharClass.stepCallback(persistent, elapsed)
                 instance.fallVelocity = 0
             end
 
-            --echo('actual step height:'..actual_step_height)
             currCenter = currCenter + vector3(0,0, actualStepHeight)
         end
 
