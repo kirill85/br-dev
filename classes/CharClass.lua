@@ -2,22 +2,22 @@ CharClass = extends (ColClass) {
     renderingDistance = 100.0;
     castShadows = true;
 
-    mass = 0;
-
-    height = 1.8;
-    radius = 0.3;
-    
     camAttachPos = V_ZERO;
 
+    mass = 0;
+    height = 1.8; -- parameters for casted cylinder
+    radius = 0.3;
+    
     walkSpeed = 10;
     runSpeed = 20;
-    speedGainStep = 15;
+    speedGainStep = 15; -- speed to gain per second
     
-    jumpsAllowed = 2; -- how much air jumps allowed
+    jumpsAllowed = 2; -- how much jumps allowed in a row, before landing again (2 = aka double jump)
     jumpVelocity = 5;
 
     stepHeight = 0.3;
-    maxFloorGradient = 1.5;
+    floorAngleThreshold = 48 --FIXME: take most common apropriate value, and remove this extra variable
+    slopeLimit = 50; -- maximum walkable slope angle
 
     pushForce = 1000;
     runPushForce = 1500;
@@ -36,8 +36,6 @@ local function initDefaultState(persistent, instance)
     instance.jumpsDone = 0
     instance.jump = false
     instance.crouch = false
-
-    instance.mass = persistent.mass
 end
 
 function CharClass.activate(persistent, instance)
@@ -52,7 +50,7 @@ function CharClass.activate(persistent, instance)
     body.ghost = true
     
     if body.mass ~= 0 then -- convert object to static
-        instance.mass = body.mass -- mass info from gcol overrides class mass info
+        persistent.mass = body.mass -- mass info from gcol overrides class mass info
         body.mass = 0
     end
 
@@ -106,7 +104,7 @@ function CharClass.stepCallback(persistent, elapsed)
 
     body.worldOrientation = quat(player_ctrl.camYaw, V_DOWN) -- aling body orientation to camera yaw
 
-    local currCenter = body.worldPosition --currFoot + vector3(0,0,persistent.height/2)
+    local currCenter = body.worldPosition -- assumes origin of body at bounding box center
 
     if instance.jump then
         if instance.offGround then
@@ -128,30 +126,38 @@ function CharClass.stepCallback(persistent, elapsed)
     instance.fallVelocity = instance.fallVelocity + elapsed * gravity
     local fallVect = elapsed * vector3(0,0,instance.fallVelocity)
     local fallFraction, floorBody, floorNormal = actor_cast(currCenter, fallVect, persistent.radius - 0.01, persistent.height, body)
-    local noStepUp
-    if fallFraction == nil then
+    local stepUp
+    if fallFraction == nil then -- we are in mid air
         instance.offGround = true
+        stepUp = false
         fallFraction = 1
         
         currCenter = currCenter + fallFraction * fallVect
-    else
+    else -- we are on ground
         instance.offGround = false
+        stepUp = true
         instance.fallVelocity = 0
 
-        local groundForce = vector3(0,0,instance.mass * gravity) -- pressure to ground
-        local floorImpulse = instance.mass * oldFallVelocity
+        local groundForce = vector3(0,0,persistent.mass * gravity) -- pressure to ground
+        local floorImpulse = persistent.mass * oldFallVelocity
         if floorImpulse ~= 0 then -- apply fall impulse to ground if any
             groundForce = groundForce + vector3(0,0,floorImpulse)
         end
-        floorBody:force(groundForce, currCenter - vector3(0,0,persistent.height/2))
+        floorBody:force(groundForce, currCenter - vector3(0,0,persistent.height/2)) --force to ground at foot position
 
-        noStepUp = instance.offGround --handle ground slopiness
-        local floorGradient = 1/floorNormal.z
-        if floorGradient < 5 and floorGradient > persistent.maxFloorGradient then
-            noStepUp = true
+        --handle ground slopiness
+        local surfaceAngle = 90-math.deg(math.asin(floorNormal.z)) 
+        if surfaceAngle < 78 and surfaceAngle > persistent.floorAngleThreshold then
+            -- don't check for step if the surface is too smooth
+            stepUp = false
+        end
+        if surfaceAngle > persistent.slopeLimit then 
+            --slide down the slopes above the slope limit
+            currCenter = currCenter + quat(90, norm(cross(fallVect, floorNormal))) * floorNormal * gravity * elapsed
+            --instance.offGround = true
+            instance.stepUp = false
         end
     end
-
     
     local moveState = vector3(instance.right - instance.left, instance.forwards - instance.backwards, 0)
     if moveState ~= V_ZERO then
@@ -160,7 +166,7 @@ function CharClass.stepCallback(persistent, elapsed)
         local walkVect = (body.worldOrientation * moveState) * (instance.desiredSpeed * elapsed)
         local walkCylHeight = persistent.height - persistent.stepHeight
         local walkCylCenter = currCenter + vector3(0,0, persistent.stepHeight/2)
-        if noStepUp then
+        if not stepUp then
             walkCylHeight = persistent.height
             walkCylCenter = currCenter
         end
@@ -173,13 +179,13 @@ function CharClass.stepCallback(persistent, elapsed)
 
         currCenter = currCenter + newWalkVect
 
-        if retries and not noStepUp then
+        if retries and stepUp then
             -- just using this position is no good, will ghost through steps
             -- always adding on step_height to z is no good either -- actual step may be less than this (or zero)
             -- so we shoot a ray down to find the actual amount we have stepped up
             local stepCheckFraction = actor_cast(currCenter+vector3(0,0,persistent.stepHeight/2), vector3(0,0,-persistent.stepHeight), persistent.radius-0.01, persistent.height-persistent.stepHeight, body)
             -- substraction of 0.01 from stepCheckFraction roughly fixes "trip on stairs" problem
-            stepCheckFraction = stepCheckFraction and stepCheckFraction-0.01 or 1 -- might not hit the ground due to rounding errors etc
+            stepCheckFraction = stepCheckFraction and stepCheckFraction--[[-0.01--]] or 1 -- might not hit the ground due to rounding errors etc
             local actualStepHeight = persistent.stepHeight*(1-stepCheckFraction)
 
             -- if we have an upwards velocity, work out if we would have made the step or not
