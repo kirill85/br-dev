@@ -8,14 +8,15 @@ CharClass = extends (ColClass) {
     height = 1.8; -- parameters for casted cylinder
     radius = 0.3;
     
-    walkSpeed = 10;
-    runSpeed = 20;
-    speedGainStep = 15; -- speed to gain per second (simply acceleration)
+    walkSpeed = 5;
+    runSpeed = 10;
+    speedGainStep = 8; -- speed to gain per second (simply acceleration)
     strafeRun = false; --allow strafe running bug? http://en.wikipedia.org/wiki/Strafe_run#Straferunning
 
     jumpsAllowed = 2; -- how much jumps allowed in a row, before landing again (2 = aka double jump)
     jumpsIfFall = false; --allow air jumps if player just fall off the ground? (false = preventing player to save himself from fall damage by extra air jump before hit the ground)
     jumpVelocity = 5;
+    jumpOffGroundTimeThreshold = 0.1; -- time since gone off ground when jumps still allowed (helps to fix unvailability of jump on small bumps)
 
     stepHeight = 0.3;
     floorAngleThreshold = 48; --FIXME: take most common apropriate value, and remove this extra variable
@@ -34,7 +35,7 @@ local function initDefaultState(persistent, instance)
     instance.backwards = 0
     instance.left = 0
     instance.right = 0
-    instance.currSpeed = 0
+    instance.currVelocity = 0
     instance.desiredSpeed = persistent.walkSpeed
     instance.lastMoveDirection = V_ZERO
     instance.fallVelocity = 0
@@ -43,6 +44,7 @@ local function initDefaultState(persistent, instance)
     instance.jump = false
     instance.crouch = false
     instance.useAntiBump = false
+    instance.timeSinceOffGround = 0 --TODO: replace offGround state with this, or if the "can't jump on light bumps" bug gets fixed, simply remove this one
 end
 
 function CharClass.activate(persistent, instance)
@@ -120,13 +122,12 @@ function CharClass.stepCallback(persistent, elapsed) --FIXME: this is very rough
                 instance.fallVelocity = persistent.jumpVelocity
                 instance.jumpsDone = instance.jumpsDone + 1
             end
-        else
+        elseif instance.timeSinceOffGround < persistent.jumpOffGroundTimeThreshold then
             instance.fallVelocity = persistent.jumpVelocity
             instance.jumpsDone = 1
         end
         instance.jump = false
     end
-    
 
     local gravity = physics_get_gravity().z
     local oldFallVelocity = instance.fallVelocity
@@ -138,6 +139,7 @@ function CharClass.stepCallback(persistent, elapsed) --FIXME: this is very rough
         instance.offGround = true
         instance.antiBump = false
         stepUp = false
+        instance.timeSinceOffGround = instance.timeSinceOffGround + elapsed
         if instance.jumpsDone == 0 then -- we just fall off, no air jumps allowed
             if not persistent.jumpsIfFall then
                 instance.jumpsDone = persistent.jumpsAllowed
@@ -146,6 +148,7 @@ function CharClass.stepCallback(persistent, elapsed) --FIXME: this is very rough
 
         currCenter = currCenter + fallVect
     else -- we are on ground
+        instance.timeSinceOffGround = 0
         --first, handle ground slopiness
         local surfaceAngle = 90-math.deg(math.asin(floorNormal.z)) 
 
@@ -187,14 +190,11 @@ function CharClass.stepCallback(persistent, elapsed) --FIXME: this is very rough
         if not persistent.strafeRun then
             moveState = norm(moveState)
         end
-
+        
         local walkVect = (body.worldOrientation * moveState) * (instance.desiredSpeed * elapsed)
-        local walkCylHeight = persistent.height - persistent.stepHeight
-        local walkCylCenter = currCenter + vector3(0,0, persistent.stepHeight/2)
-        if not stepUp then
-            walkCylHeight = persistent.height
-            walkCylCenter = currCenter
-        end
+        local walkCylHeight = stepUp and persistent.height - persistent.stepHeight or persistent.height
+        local walkCylCenter = stepUp and currCenter + vector3(0,0, persistent.stepHeight/2) or currCenter
+        
         local retries, newWalkVect, collisionBody, collisionNormal, collisionPos = cast_cylinder_with_deflection(body, persistent.radius, walkCylHeight, walkCylCenter, walkVect)
         
         if collisionBody then --push the collided body in front of us
@@ -222,8 +222,6 @@ function CharClass.stepCallback(persistent, elapsed) --FIXME: this is very rough
 
             currCenter = currCenter + vector3(0,0, actualStepHeight)
         end
-
-        --currCenter = currCenter + (body.worldOrientation * moveState) * (instance.desiredSpeed * elapsed)
     end
 
     body.worldPosition = currCenter
