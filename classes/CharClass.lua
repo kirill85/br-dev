@@ -117,16 +117,18 @@ function CharClass.stepCallback(persistent, elapsed) --FIXME: this is very rough
     local currCenter = body.worldPosition -- assumes origin of body at bounding box center
 
     if instance.jump then
-        if instance.offGround then
+        if instance.offGround and (instance.timeSinceOffGround > persistent.jumpOffGroundTimeThreshold) then
             if instance.jumpsDone < persistent.jumpsAllowed then --check if we have ability to jump in air (aka double-jump)
                 instance.fallVelocity = persistent.jumpVelocity
                 instance.jumpsDone = instance.jumpsDone + 1
             end
-        elseif instance.timeSinceOffGround < persistent.jumpOffGroundTimeThreshold then
+        else
             instance.fallVelocity = persistent.jumpVelocity
             instance.jumpsDone = 1
         end
-        instance.jump = false
+        if instance.timeSinceOffGround > persistent.jumpOffGroundTimeThreshold then
+            instance.jump = false
+        end
     end
 
     local gravity = physics_get_gravity().z
@@ -138,6 +140,7 @@ function CharClass.stepCallback(persistent, elapsed) --FIXME: this is very rough
     if fallFraction == nil then -- we are in mid air
         instance.offGround = true
         instance.antiBump = false
+        instance.jump = false
         stepUp = false
         instance.timeSinceOffGround = instance.timeSinceOffGround + elapsed
         if instance.jumpsDone == 0 then -- we just fall off, no air jumps allowed
